@@ -1,0 +1,6 @@
+# 내 백업 파일은 커밋하지 않는다(예시만 허용)
+*.json
+!examples/*.json
+!package.json
+node_modules/
+.DS_Store

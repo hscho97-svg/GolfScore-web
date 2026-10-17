@@ -1,0 +1,130 @@
+/* 골프 스코어 웹 도구. 폰 앱과 같은 초록 계열. PC·태블릿(가로·세로) 폭에 맞춘다. */
+:root {
+  --bg: #f6f8f5;
+  --surface: #ffffff;
+  --text: #1c2a1f;
+  --muted: #5e6b61;
+  --line: #d9e1da;
+  --accent: #2e7d32;
+  --accent-soft: #e3f1e4;
+  --warn: #b26a00;
+  --warn-soft: #fff4e0;
+  --error: #c62828;
+  --under: #d32f2f;
+  --over: #1e66b5;
+  --radius: 10px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121612;
+    --surface: #1b211c;
+    --text: #e4ece5;
+    --muted: #9aa89d;
+    --line: #2f3a31;
+    --accent: #81c784;
+    --accent-soft: #23362a;
+    --warn: #ffb74d;
+    --warn-soft: #33281a;
+    --error: #ef9a9a;
+    --under: #ef9a9a;
+    --over: #90caf9;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+.topbar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px;
+  padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.topbar h1 { margin: 0; font-size: 18px; }
+.topbar h1 span { color: var(--muted); font-weight: 400; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.tabs button { border-radius: 999px; }
+.tabs button[aria-current="page"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+.footnote { max-width: 1100px; margin: 0 auto; padding: 8px 16px 32px; color: var(--muted); font-size: 13px; }
+
+h2 { font-size: 20px; margin: 8px 0 12px; }
+h3 { font-size: 16px; margin: 16px 0 8px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 16px; margin-bottom: 12px;
+}
+.row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.spacer { flex: 1; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+
+button, .button {
+  font: inherit; cursor: pointer;
+  padding: 8px 14px; min-height: 40px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text);
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { color: var(--error); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.link { border: none; background: none; color: var(--accent); padding: 4px 6px; min-height: 0; }
+
+label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+input, select, textarea {
+  font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-height: 40px;
+}
+textarea { min-height: 64px; resize: vertical; }
+input[aria-invalid="true"] { border-color: var(--error); }
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.notice { padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); color: var(--warn); margin: 8px 0; }
+.notice.error { color: var(--error); }
+.notice.ok { background: var(--accent-soft); color: var(--accent); }
+.problems { margin: 6px 0 0; padding-left: 18px; color: var(--error); font-size: 13px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); min-height: 34px; }
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+.drop {
+  border: 2px dashed var(--line); border-radius: var(--radius); padding: 32px 16px; text-align: center;
+  background: var(--surface);
+}
+.drop.over { border-color: var(--accent); background: var(--accent-soft); }
+
+/* 표: 좁은 화면에서는 가로로 밀어 본다 */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th { position: sticky; top: 0; background: var(--surface); font-weight: 600; color: var(--muted); }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover { background: var(--accent-soft); }
+td.num, th.num { text-align: right; }
+td input, td select { min-height: 34px; padding: 4px 6px; width: 64px; }
+td input[type="checkbox"] { width: 20px; min-height: 20px; }
+.under { color: var(--under); }
+.over { color: var(--over); }
+.badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
+
+.nine { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 8px 0; }
+.nine-head { display: flex; align-items: center; gap: 8px; }
+.nine-head strong { flex: 1; }
+
+.sticky-actions {
+  position: sticky; bottom: 0; background: var(--bg); padding: 10px 0;
+  display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line);
+}
+
+@media (max-width: 600px) {
+  main { padding: 12px; }
+  td input, td select { width: 52px; }
+}
