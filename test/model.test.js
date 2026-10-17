@@ -167,3 +167,28 @@ test('레이팅·슬로프 읽기', () => {
   assert.equal(m.parseSlope('40'), null);
   assert.equal(m.parseSlope('12.5'), null);
 });
+
+test('9홀 코스 레이팅·슬로프: 범위 검사와 18홀 계산(WHS: 합·평균)', () => {
+  assert.equal(m.parseNineRating('35,6'), 35.6);
+  assert.equal(m.parseNineRating('71.2'), null); // 18홀 값을 잘못 넣음
+  assert.equal(m.parseNineRating(''), null);
+
+  const a = { ...out, courseRating: 35.6, slopeRating: 127 };
+  const b = { ...inn, courseRating: 36.1, slopeRating: 130 };
+  assert.deepEqual(m.comboRatings({ front: a, back: b }), { courseRating: 71.7, slopeRating: 129 }); // (127+130)/2 = 128.5 → 129
+  assert.deepEqual(m.comboRatings({ front: a, back: null }), { courseRating: 35.6, slopeRating: 127 });
+  assert.deepEqual(m.comboRatings({ front: a, back: inn }), { courseRating: null, slopeRating: null });
+
+  assert.deepEqual(m.nineProblems({ ...a, courseRating: 71.7 }), ['코스 레이팅은 15~45 이어야 해요(9홀 값)']);
+  assert.deepEqual(m.nineProblems({ ...a, slopeRating: 40 }), ['슬로프는 55~155 정수여야 해요']);
+});
+
+test('코스 지정 때 라운드 레이팅이 비어 있으면 조합 값으로 채우고, 있으면 그대로', () => {
+  const combo = { front: { ...out, courseRating: 35.6, slopeRating: 127 }, back: { ...inn, courseRating: 36.1, slopeRating: 130 } };
+  const empty = round18(m.comboPars(combo));
+  assert.deepEqual([m.withComboRatingsIfEmpty(empty, combo).courseRating, m.withComboRatingsIfEmpty(empty, combo).slopeRating], [71.7, 129]);
+  const filled = { ...empty, courseRating: 70.1, slopeRating: null };
+  const r = m.withComboRatingsIfEmpty(filled, combo);
+  assert.equal(r.courseRating, 70.1);
+  assert.equal(r.slopeRating, 129);
+});

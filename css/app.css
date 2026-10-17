@@ -117,7 +117,11 @@ td input[type="checkbox"] { width: 20px; min-height: 20px; }
 
 .nine { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 8px 0; }
 .nine-head { display: flex; align-items: center; gap: 8px; }
-.nine-head strong { flex: 1; }
+.nine-head strong { white-space: nowrap; }
+.nine-head input { flex: 1; min-width: 0; }
+.nine-grid td, .nine-grid th { padding: 4px; text-align: center; }
+.nine-grid th:first-child { text-align: left; }
+.nine-grid input { width: 44px; text-align: center; padding: 4px; }
 
 .sticky-actions {
   position: sticky; bottom: 0; background: var(--bg); padding: 10px 0;

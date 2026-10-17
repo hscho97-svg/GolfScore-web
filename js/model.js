@@ -239,6 +239,12 @@ export function nineProblems(nine) {
     const ok = si.length === NINE_HOLES && si.every((v) => v >= 1 && v <= 18) && new Set(si).size === NINE_HOLES;
     if (!ok) problems.push('HCDP 는 9개, 1~18, 서로 다른 숫자여야 해요');
   }
+  if (nine.courseRating != null && !(nine.courseRating >= NINE_RATING[0] && nine.courseRating <= NINE_RATING[1])) {
+    problems.push(`코스 레이팅은 ${NINE_RATING[0]}~${NINE_RATING[1]} 이어야 해요(9홀 값)`);
+  }
+  if (nine.slopeRating != null && !(Number.isInteger(nine.slopeRating) && nine.slopeRating >= 55 && nine.slopeRating <= 155)) {
+    problems.push('슬로프는 55~155 정수여야 해요');
+  }
   return problems;
 }
 
@@ -271,4 +277,38 @@ export function parseSlope(text) {
   const s = String(text ?? '').trim();
   const v = Number(s);
   return /^\d+$/.test(s) && v >= 55 && v <= 155 ? v : null;
+}
+
+// ── 9홀 코스 레이팅·슬로프 (앱 Nine.courseRating·slopeRating, docs/spec-web-tool.md 10-2) ──
+
+/** 9홀 코스 레이팅 범위. 9홀 값은 보통 30대 중반이라 18홀 범위(30~90)로는 실수를 못 잡는다. */
+export const NINE_RATING = [15, 45];
+
+/** 9홀 코스 레이팅 입력. 비었거나 범위 밖이면 null(검사는 nineRatingInput 으로). */
+export function parseNineRating(text) {
+  const s = String(text ?? '').trim().replace(',', '.');
+  const v = Number(s);
+  return s !== '' && Number.isFinite(v) && v >= NINE_RATING[0] && v <= NINE_RATING[1] ? Math.round(v * 10) / 10 : null;
+}
+
+/**
+ * 조합의 18홀(또는 9홀) 코스 레이팅·슬로프(WHS): 레이팅 = 전반 + 후반(소수 첫째 자리), 슬로프 = 두 값의 평균(반올림).
+ * 9홀 라운드는 그 코스 값 그대로. 한쪽이라도 모르면 그 값은 null.
+ */
+export function comboRatings(combo) {
+  const { front, back } = combo;
+  if (!back) return { courseRating: front.courseRating ?? null, slopeRating: front.slopeRating ?? null };
+  const rating = front.courseRating != null && back.courseRating != null ? Math.round((front.courseRating + back.courseRating) * 10) / 10 : null;
+  const slope = front.slopeRating != null && back.slopeRating != null ? Math.round((front.slopeRating + back.slopeRating) / 2) : null;
+  return { courseRating: rating, slopeRating: slope };
+}
+
+/** 라운드의 레이팅·슬로프가 비어 있으면 조합 값으로 채운다. 이미 있는 값은 그대로 둔다. */
+export function withComboRatingsIfEmpty(round, combo) {
+  const r = comboRatings(combo);
+  return {
+    ...round,
+    courseRating: round.courseRating ?? r.courseRating,
+    slopeRating: round.slopeRating ?? r.slopeRating,
+  };
 }

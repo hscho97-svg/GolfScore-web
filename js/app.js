@@ -281,23 +281,63 @@ function clubList() {
         club.nines.map((n) => h('div', { class: 'small' },
           `${n.name}  파 ${n.pars.join(' ')} (${n.pars.reduce((a, b) => a + b, 0)})`,
           n.strokeIndexes ? `  · HCDP ${n.strokeIndexes.join(' ')}` : '',
+          n.courseRating != null || n.slopeRating != null ? `  · 레이팅 ${n.courseRating ?? '–'} / 슬로프 ${n.slopeRating ?? '–'}` : '',
         )),
       );
     }),
   );
 }
 
-/** 골프장 편집 입력 상태. 모르는 필드는 rest 에 그대로 둔다. */
+/**
+ * 골프장 편집 입력 상태. 9홀 코스마다 홀별 칸(파 9칸, HCDP 9칸)과 9홀 레이팅·슬로프 글자를 둔다.
+ * 모르는 필드는 rest 에 그대로 둔다(저장할 때 다시 씀).
+ */
+function nineInputOf(n) {
+  return {
+    rest: n, id: n.id, isNew: false, name: n.name,
+    pars: n.pars.map(String),
+    sis: n.strokeIndexes ? n.strokeIndexes.map(String) : Array(9).fill(''),
+    ratingText: n.courseRating != null ? String(n.courseRating) : '',
+    slopeText: n.slopeRating != null ? String(n.slopeRating) : '',
+  };
+}
+
+function freshNineInput(name, pars) {
+  return { rest: {}, id: m.newId(), isNew: true, name, pars: pars.map(String), sis: Array(9).fill(''), ratingText: '', slopeText: '' };
+}
+
 function clubInput(club) {
-  const nineInput = (n) => ({ rest: n, id: n.id, isNew: false, name: n.name, parText: n.pars.join(','), siText: n.strokeIndexes?.join(',') ?? '' });
   if (!club) {
-    const fresh = (name, pars) => ({ rest: {}, id: m.newId(), isNew: true, name, parText: pars.join(','), siText: '' });
     return {
       rest: {}, id: m.newId(), isNew: true, name: '', updatedAt: 0,
-      nines: [fresh('OUT', m.DEFAULT_PARS_18.slice(0, 9)), fresh('IN', m.DEFAULT_PARS_18.slice(9))],
+      nines: [freshNineInput('OUT', m.DEFAULT_PARS_18.slice(0, 9)), freshNineInput('IN', m.DEFAULT_PARS_18.slice(9))],
     };
   }
-  return { rest: club, id: club.id, isNew: false, name: club.name, updatedAt: club.updatedAt, nines: club.nines.map(nineInput) };
+  return { rest: club, id: club.id, isNew: false, name: club.name, updatedAt: club.updatedAt, nines: club.nines.map(nineInputOf) };
+}
+
+const parCellOk = (v) => /^\d+$/.test(v.trim()) && Number(v) >= 3 && Number(v) <= 6;
+
+/** HCDP 칸 하나가 틀렸는지: 1~18 정수이고 같은 코스에서 겹치지 않아야 한다. 빈 칸은 여기서 보지 않는다. */
+function siCellBad(sis, i) {
+  const v = sis[i].trim();
+  if (v === '') return false;
+  if (!/^\d+$/.test(v) || Number(v) < 1 || Number(v) > 18) return true;
+  return sis.some((other, j) => j !== i && other.trim() !== '' && Number(other) === Number(v));
+}
+
+/** 9홀 코스 입력의 문제(칸 단위 검사). 저장을 막는다. */
+function nineInputProblems(n) {
+  const problems = [];
+  const label = n.name.trim() || '코스';
+  if (!n.name.trim()) problems.push('코스 이름이 비어 있어요');
+  if (n.pars.some((v) => !parCellOk(v))) problems.push(`${label}: 파는 3~6 숫자로 적어 주세요`);
+  const filled = n.sis.filter((v) => v.trim() !== '').length;
+  if (filled > 0 && filled < 9) problems.push(`${label}: HCDP 는 9칸 모두 채우거나 모두 비워 주세요`);
+  if (n.sis.some((_, i) => siCellBad(n.sis, i))) problems.push(`${label}: HCDP 는 1~18, 서로 다른 숫자로 적어 주세요`);
+  if (n.ratingText.trim() && m.parseNineRating(n.ratingText) == null) problems.push(`${label}: 코스 레이팅은 ${m.NINE_RATING[0]}~${m.NINE_RATING[1]} (9홀 값)`);
+  if (n.slopeText.trim() && m.parseSlope(n.slopeText) == null) problems.push(`${label}: 슬로프는 55~155`);
+  return problems;
 }
 
 function clubFromInput(input) {
@@ -306,18 +346,75 @@ function clubFromInput(input) {
     id: input.id,
     name: input.name.trim(),
     nines: input.nines.map((n) => {
-      const si = m.parseStrokeIndexes(n.siText, m.NINE_HOLES);
-      return { ...n.rest, id: n.id, name: n.name.trim(), pars: m.parsePars(n.parText, m.NINE_HOLES), strokeIndexes: si.kind === 'valid' ? si.indexes : null };
+      const allSi = n.sis.every((v) => v.trim() !== '');
+      return {
+        ...n.rest,
+        id: n.id,
+        name: n.name.trim(),
+        pars: n.pars.map((v) => (parCellOk(v) ? Number(v) : 4)),
+        strokeIndexes: allSi ? n.sis.map(Number) : null,
+        courseRating: m.parseNineRating(n.ratingText),
+        slopeRating: m.parseSlope(n.slopeText),
+      };
     }),
     updatedAt: input.updatedAt,
   };
 }
 
+/** 엔터를 누르면 갈 칸: 파 1→9 → HCDP 1→9 → 다음 코스 파 1(마지막 코스면 그 코스 레이팅). */
+function nextCellId(i, row, h, nineCount) {
+  if (h < 8) return `n${i}-${row}${h + 1}`;
+  if (row === 'p') return `n${i}-s0`;
+  return i + 1 < nineCount ? `n${i + 1}-p0` : `n${i}-cr`;
+}
+
+/** 9홀 코스 하나의 가로 표(스코어카드 모양). */
+function nineGrid(input, n, i) {
+  const cell = (row, col) => {
+    const values = row === 'p' ? n.pars : n.sis;
+    const bad = row === 'p' ? !parCellOk(values[col]) : siCellBad(values, col);
+    return h('td', {}, h('input', {
+      id: `n${i}-${row}${col}`, value: values[col], inputmode: 'numeric', maxlength: 2, autocomplete: 'off',
+      'aria-label': `${m.ordinalCourse(i)} ${col + 1}번 홀 ${row === 'p' ? '파' : 'HCDP'}`,
+      'aria-invalid': bad ? 'true' : null,
+      oninput: (e) => (values[col] = e.target.value),
+      onchange: () => render(),
+      onfocus: (e) => e.target.select(),
+      onkeydown: (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        values[col] = e.target.value;
+        render();
+        const next = document.getElementById(nextCellId(i, row, col, input.nines.length));
+        next?.focus();
+        next?.select?.();
+      },
+      // "4,4,3,5…" 처럼 여러 숫자를 붙여 넣으면 이 칸부터 오른쪽으로 나눠 채운다
+      onpaste: (e) => {
+        const nums = m.splitNumbers(e.clipboardData.getData('text'));
+        if (nums.length < 2) return;
+        e.preventDefault();
+        nums.slice(0, 9 - col).forEach((v, k) => (values[col + k] = v));
+        render();
+      },
+    }));
+  };
+  const total = n.pars.reduce((s, v) => s + (parCellOk(v) ? Number(v) : 0), 0);
+  return h('div', { class: 'table-wrap' },
+    h('table', { class: 'nine-grid' },
+      h('thead', {}, h('tr', {}, h('th', {}, '홀'), [...Array(9)].map((_, k) => h('th', { class: 'num' }, k + 1)), h('th', { class: 'num' }, '합계'))),
+      h('tbody', {},
+        h('tr', {}, h('th', {}, '파'), [...Array(9)].map((_, k) => cell('p', k)), h('td', { class: 'num' }, h('strong', {}, total))),
+        h('tr', {}, h('th', {}, 'HCDP'), [...Array(9)].map((_, k) => cell('s', k)), h('td', {})),
+      ),
+    ),
+  );
+}
+
 function clubEditor() {
   const input = view.club;
-  const invalidSi = input.nines.filter((n) => m.parseStrokeIndexes(n.siText, m.NINE_HOLES).kind === 'invalid');
   const club = clubFromInput(input);
-  const problems = [...m.clubProblems(club), ...invalidSi.map((n) => `${n.name || '코스'}: HCDP 는 9개, 1~18, 서로 다른 숫자로`)];
+  const problems = [...(input.name.trim() ? [] : ['골프장 이름이 비어 있어요']), ...input.nines.flatMap(nineInputProblems)];
   const changeAndRender = (fn) => (e) => {
     fn(e.target);
     render();
@@ -331,29 +428,38 @@ function clubEditor() {
     h('div', { class: 'card' },
       h('label', { class: 'field' }, '골프장 이름',
         h('input', { id: 'club-name', value: input.name, onchange: changeAndRender((t) => (input.name = t.value)) })),
-      h('p', { class: 'muted small' }, '9홀 코스마다 이름·홀별 파·HCDP 를 적어요. 27·36홀 골프장은 [9홀 코스 추가] 로 더해요. 골프장 삭제는 폰 코스 탭에서 해요.'),
+      h('p', { class: 'muted small' },
+        '9홀 코스마다 홀별 파·HCDP 를 칸에 적어요. 엔터를 누르면 다음 홀로 넘어가요. ',
+        '"4,4,3,5…" 를 한 칸에 붙여 넣으면 오른쪽 칸으로 나눠 채워요. HCDP 는 9칸 모두 적거나 모두 비워 두세요. ',
+        '27·36홀 골프장은 [9홀 코스 추가] 로 더해요. 골프장 삭제는 폰 코스 탭에서 해요.'),
       input.nines.map((n, i) => h('div', { class: 'nine' },
         h('div', { class: 'nine-head' },
           h('strong', {}, m.ordinalCourse(i)),
+          h('input', { id: `n${i}-name`, value: n.name, placeholder: '코스 이름 (OUT, IN, 크리크…)', 'aria-label': '코스 이름',
+            'aria-invalid': !n.name.trim() ? 'true' : null, onchange: changeAndRender((t) => (n.name = t.value)) }),
           input.nines.length > 1 ? h('button', { class: 'link', onclick: () => removeNine(input, i) }, '삭제') : null,
         ),
-        h('div', { class: 'grid2' },
-          h('label', { class: 'field' }, '코스 이름',
-            h('input', { id: `nine-name-${i}`, value: n.name, placeholder: 'OUT, IN, 크리크…', 'aria-invalid': !n.name.trim() ? 'true' : null,
-              onchange: changeAndRender((t) => (n.name = t.value)) })),
-          h('label', { class: 'field' }, `홀별 파 9개 (합계 ${m.parsePars(n.parText, 9).reduce((a, b) => a + b, 0)})`,
-            h('input', { id: `nine-par-${i}`, value: n.parText, inputmode: 'decimal', onchange: changeAndRender((t) => (n.parText = t.value)) })),
-          h('label', { class: 'field' }, 'HCDP 9개 (선택, 스코어카드 숫자 그대로)',
-            h('input', { id: `nine-si-${i}`, value: n.siText, inputmode: 'decimal', placeholder: '7,1,3,5,9,11,13,15,17',
-              'aria-invalid': m.parseStrokeIndexes(n.siText, 9).kind === 'invalid' ? 'true' : null,
-              onchange: changeAndRender((t) => (n.siText = t.value)) })),
+        nineGrid(input, n, i),
+        h('div', { class: 'row' },
+          h('label', { class: 'field' }, `코스 레이팅 (9홀, ${m.NINE_RATING[0]}~${m.NINE_RATING[1]})`,
+            h('input', { id: `n${i}-cr`, value: n.ratingText, inputmode: 'decimal', placeholder: '35.6',
+              'aria-invalid': n.ratingText.trim() && m.parseNineRating(n.ratingText) == null ? 'true' : null,
+              onchange: changeAndRender((t) => (n.ratingText = t.value)) })),
+          h('label', { class: 'field' }, '슬로프 (9홀, 55~155)',
+            h('input', { id: `n${i}-sl`, value: n.slopeText, inputmode: 'numeric', placeholder: '127',
+              'aria-invalid': n.slopeText.trim() && m.parseSlope(n.slopeText) == null ? 'true' : null,
+              onchange: changeAndRender((t) => (n.slopeText = t.value)) })),
         ),
       )),
       h('button', { onclick: () => {
-        input.nines.push({ rest: {}, id: m.newId(), isNew: true, name: '', parText: Array(9).fill(4).join(','), siText: '' });
+        input.nines.push(freshNineInput('', Array(9).fill(4)));
         render();
+        document.getElementById(`n${input.nines.length - 1}-name`)?.focus();
       } }, '+ 9홀 코스 추가'),
       problems.length ? h('ul', { class: 'problems' }, problems.map((p) => h('li', {}, p))) : null,
+      club.nines.length >= 2 && club.nines.every((x) => x.courseRating != null && x.slopeRating != null)
+        ? h('p', { class: 'muted small' }, `18홀 예: ${club.nines[0].name}+${club.nines[1].name} = 레이팅 ${m.comboRatings({ front: club.nines[0], back: club.nines[1] }).courseRating} / 슬로프 ${m.comboRatings({ front: club.nines[0], back: club.nines[1] }).slopeRating} (합·평균)`)
+        : null,
     ),
     h('div', { class: 'sticky-actions' },
       h('button', { class: 'primary', disabled: problems.length > 0, onclick: () => saveClub(input) }, '골프장 저장'),
@@ -516,7 +622,8 @@ function applyBulkNines(selected) {
   const club = clubById(panel.clubId);
   const combo = findCombo(club, panel.key);
   update(() => {
-    selected.forEach((r) => setRound(r.id, (x) => m.withNines(x, club, combo, panel.replacePars)));
+    // 라운드 레이팅·슬로프가 비어 있으면 9홀 값의 합·평균으로 채운다(docs/spec-web-tool.md 10-2)
+    selected.forEach((r) => setRound(r.id, (x) => m.withComboRatingsIfEmpty(m.withNines(x, club, combo, panel.replacePars), combo)));
     view.bulk = null;
     view.message = { kind: 'ok', text: `라운드 ${selected.length}개를 ${club.name} · ${m.comboLabel(combo)} 로 지정했어요.` };
   });
@@ -594,7 +701,7 @@ function roundEditor() {
         const club = clubById(assign.clubId);
         const c = findCombo(club, assign.key);
         update(() => {
-          setRound(r.id, (x) => m.withNines(x, club, c, assign.replacePars));
+          setRound(r.id, (x) => m.withComboRatingsIfEmpty(m.withNines(x, club, c, assign.replacePars), c));
           view.message = { kind: 'ok', text: `${club.name} · ${m.comboLabel(c)} 로 지정했어요.` };
         });
       }),

@@ -41,9 +41,9 @@ const club = {
   id: 'club-sample',
   name: '샘플CC',
   nines: [
-    { id: 'nine-a', name: '가람', pars: [4, 4, 3, 5, 4, 4, 3, 4, 5], strokeIndexes: [7, 1, 17, 5, 11, 3, 15, 13, 9] },
-    { id: 'nine-b', name: '누리', pars: [4, 3, 4, 5, 4, 4, 3, 4, 5], strokeIndexes: [8, 18, 2, 6, 10, 4, 16, 14, 12] },
-    { id: 'nine-c', name: '다온', pars: [5, 4, 3, 4, 4, 3, 5, 4, 4], strokeIndexes: null },
+    { id: 'nine-a', name: '가람', pars: [4, 4, 3, 5, 4, 4, 3, 4, 5], strokeIndexes: [7, 1, 17, 5, 11, 3, 15, 13, 9], courseRating: 35.6, slopeRating: 127 },
+    { id: 'nine-b', name: '누리', pars: [4, 3, 4, 5, 4, 4, 3, 4, 5], strokeIndexes: [8, 18, 2, 6, 10, 4, 16, 14, 12], courseRating: 36.1, slopeRating: 130 },
+    { id: 'nine-c', name: '다온', pars: [5, 4, 3, 4, 4, 3, 5, 4, 4], strokeIndexes: null, courseRating: null, slopeRating: null },
   ],
   updatedAt: T0,
 };
@@ -134,11 +134,11 @@ let state = openBackup(sampleText);
 const b = state.backup;
 const sampleClub = b.clubs[0];
 const combo = { front: sampleClub.nines[1], back: sampleClub.nines[0] };
-let edited = m.withNines(b.rounds.find((r) => r.id === 'round-old'), sampleClub, combo, true);
+let edited = m.withComboRatingsIfEmpty(m.withNines(b.rounds.find((r) => r.id === 'round-old'), sampleClub, combo, true), combo);
 edited = m.updateHole(edited, 2, (h) => m.setPutts(m.setStrokes(h, 4), 1));
 edited = m.setRoundStrokeIndexes(edited, m.comboStrokeIndexes(combo));
 b.rounds = b.rounds.map((r) => (r.id === edited.id ? edited : r));
-b.clubs = [{ ...sampleClub, nines: [...sampleClub.nines, { id: 'nine-d', name: '라온', pars: [4, 4, 4, 3, 5, 4, 4, 3, 5], strokeIndexes: null }] }];
+b.clubs = [{ ...sampleClub, nines: [...sampleClub.nines, { id: 'nine-d', name: '라온', pars: [4, 4, 4, 3, 5, 4, 4, 3, 5], strokeIndexes: null, courseRating: 34.8, slopeRating: 121 }] }];
 const saved = buildSave(state, T0 + 4 * 86400000);
 writeFileSync('examples/sample-backup-edited.json', saved.text);
 console.log('examples/sample-backup.json, examples/sample-backup-edited.json');
