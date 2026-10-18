@@ -2,8 +2,11 @@
 // 상태를 고칠 때마다 화면 전체를 다시 그린다(항목 수가 적어 충분히 빠르다). 포커스는 그린 뒤 되살린다.
 
 import * as m from './model.js';
-import { BackupError, buildSave, changesOf, openBackup, saveFileName, saveProblems } from './backup.js';
+import {
+  BackupError, buildSave, buildZip, changeCount, changesOf, deleteItem, openBackupBytes, saveFileName, saveProblems, undoDelete,
+} from './backup.js';
 import { clearDraft, loadDraft, saveDraft } from './draft.js';
+import { prepareImage, imageUrl } from './images.js';
 
 const appEl = document.getElementById('app');
 const tabsEl = document.getElementById('tabs');
@@ -26,6 +29,7 @@ const view = {
   assign: null, // 라운드 편집의 코스 지정 { clubId, key, replacePars }
   message: null, // { kind: 'ok'|'error'|'warn', text }
   fieldErrors: {},
+  hole: null, // 골프장 편집에서 연 홀 상세 { nine: 코스 순서, k: 0~8 }
 };
 
 // ── 작은 도우미 ──
@@ -100,8 +104,7 @@ function update(fn) {
 function renderTabs() {
   tabsEl.hidden = !state;
   if (!state) return;
-  const changes = changesOf(state);
-  const count = changes.newClubs.length + changes.changedClubs.length + changes.changedRounds.length;
+  const count = changeCount(changesOf(state));
   const tab = (id, label) =>
     h('button', {
       'aria-current': view.tab === id ? 'page' : null,
@@ -135,7 +138,7 @@ function screen() {
 
 function startScreen() {
   const drop = h('div', { class: 'drop' },
-    h('p', {}, h('strong', {}, '폰에서 내보낸 백업 파일(JSON)을 여세요')),
+    h('p', {}, h('strong', {}, '폰에서 내보낸 백업 파일(JSON 또는 그림 포함 zip)을 여세요')),
     h('p', { class: 'muted small' }, '폰 라운드 탭 ⋮ → 백업 파일로 저장. Google Drive 에 두면 PC·태블릿에서 바로 열 수 있어요.'),
     h('button', { class: 'primary', onclick: () => pickFile() }, '백업 파일 열기'),
     h('p', { class: 'muted small' }, '또는 파일을 여기에 끌어다 놓기'),
@@ -149,7 +152,7 @@ function startScreen() {
     e.preventDefault();
     drop.classList.remove('over');
     const file = e.dataTransfer.files[0];
-    if (file) loadText(await file.text(), file.name, null);
+    if (file) loadFile(file, null);
   });
 
   return h('div', {},
@@ -170,9 +173,9 @@ function startScreen() {
     h('div', { class: 'card' },
       h('h3', {}, '쓰는 순서'),
       h('ol', {},
-        h('li', {}, '폰: 라운드 탭 ⋮ → 백업 파일로 저장 (JSON)'),
-        h('li', {}, '여기서 열고 골프장·라운드를 고친 뒤 [저장] 탭에서 백업 파일로 저장'),
-        h('li', {}, '폰: 라운드 탭 ⋮ → 백업 파일 가져오기 → 고친 것만 들어가요'),
+        h('li', {}, '폰: 라운드 탭 ⋮ → 백업 파일로 저장 (JSON, 야디지북 그림이 있으면 그림 포함 zip)'),
+        h('li', {}, '여기서 열고 골프장·야디지북·라운드를 고친 뒤 [저장] 탭에서 백업 파일로 저장'),
+        h('li', {}, '폰: 라운드 탭 ⋮ → 백업 파일 가져오기 → 고친 것만 들어가요(지운 것은 폰이 물어본 뒤 지워요)'),
       ),
     ),
   );
@@ -182,37 +185,42 @@ async function pickFile() {
   if (window.showOpenFilePicker) {
     try {
       const [handle] = await window.showOpenFilePicker({
-        types: [{ description: '골프 스코어 백업', accept: { 'application/json': ['.json'] } }],
+        types: [{ description: '골프 스코어 백업', accept: { 'application/json': ['.json'], 'application/zip': ['.zip'] } }],
       });
-      const file = await handle.getFile();
-      loadText(await file.text(), file.name, handle);
+      loadFile(await handle.getFile(), handle);
     } catch (e) {
       if (e?.name !== 'AbortError') showError(`파일을 열지 못했어요: ${e.message}`);
     }
     return;
   }
-  const input = h('input', { type: 'file', accept: '.json,application/json' });
-  input.addEventListener('change', async () => {
+  const input = h('input', { type: 'file', accept: '.json,.zip,application/json,application/zip' });
+  input.addEventListener('change', () => {
     const file = input.files[0];
-    if (file) loadText(await file.text(), file.name, null);
+    if (file) loadFile(file, null);
   });
   input.click();
 }
 
-function loadText(text, name, handle) {
+async function loadFile(file, handle) {
   if (state && hasChanges() && !confirm('지금 고친 내용을 저장하지 않고 다른 파일을 열까요?')) return;
+  let next;
   try {
-    state = openBackup(text);
+    next = await openBackupBytes(new Uint8Array(await file.arrayBuffer()));
   } catch (e) {
     state = null;
     showError(e instanceof BackupError ? e.message : `파일을 열지 못했어요: ${e.message}`);
     return;
   }
-  fileName = name;
+  state = next;
+  fileName = file.name;
   fileHandle = handle;
-  Object.assign(view, { tab: 'clubs', club: null, roundId: null, selected: new Set(), bulk: null, assign: null, fieldErrors: {} });
+  Object.assign(view, { tab: 'clubs', club: null, roundId: null, selected: new Set(), bulk: null, assign: null, fieldErrors: {}, hole: null });
   const b = state.backup;
-  view.message = { kind: 'ok', text: `${name} — 라운드 ${b.rounds.length}개 · 골프장 ${b.clubs.length}개 · 백업 ${fmtDate(b.exportedAt)}` };
+  view.message = {
+    kind: 'ok',
+    text: `${file.name} — 라운드 ${b.rounds.length}개 · 골프장 ${b.clubs.length}개 · 백업 ${fmtDate(b.exportedAt)}` +
+      (state.fromZip ? ` · 야디지북 그림 ${state.images.size}개` : ''),
+  };
   scheduleDraft();
   render();
 }
@@ -222,10 +230,7 @@ function showError(text) {
   render();
 }
 
-const hasChanges = () => {
-  const c = changesOf(state);
-  return c.newClubs.length + c.changedClubs.length + c.changedRounds.length > 0;
-};
+const hasChanges = () => changeCount(changesOf(state)) > 0;
 
 // ── 임시 보관 ──
 
@@ -234,9 +239,14 @@ function scheduleDraft() {
   if (!state) return;
   clearTimeout(draftTimer);
   draftTimer = setTimeout(() => {
+    // 그림(Uint8Array)도 IndexedDB 에 그대로 넣는다(용량 때문에 localStorage 는 쓰지 않음).
     saveDraft({
       backupText: JSON.stringify(state.backup),
-      originals: { rounds: [...state.originals.rounds], clubs: [...state.originals.clubs] },
+      originals: { rounds: [...state.originals.rounds], clubs: [...state.originals.clubs], deleted: [...(state.originals.deleted ?? [])] },
+      images: [...state.images],
+      changedImages: [...state.changedImages],
+      trash: state.trash,
+      fromZip: state.fromZip,
       fileName,
       savedAt: Date.now(),
     });
@@ -248,8 +258,13 @@ async function resumeDraft() {
   if (!d) return;
   state = {
     backup: JSON.parse(d.backupText),
-    originals: { rounds: new Map(d.originals.rounds), clubs: new Map(d.originals.clubs) },
+    originals: { rounds: new Map(d.originals.rounds), clubs: new Map(d.originals.clubs), deleted: new Set(d.originals.deleted ?? []) },
+    images: new Map(d.images ?? []),
+    changedImages: new Set(d.changedImages ?? []),
+    trash: d.trash ?? [],
+    fromZip: !!d.fromZip,
   };
+  if (!Array.isArray(state.backup.deleted)) state.backup.deleted = [];
   fileName = d.fileName;
   fileHandle = null;
   view.message = { kind: 'ok', text: `이어서 합니다 — ${fileName ?? '백업 파일'}` };
@@ -275,13 +290,28 @@ function clubList() {
           h('strong', {}, club.name),
           !state.originals.clubs.has(club.id) ? h('span', { class: 'badge' }, '새로 만듦') : changed ? h('span', { class: 'badge warn' }, '고침') : null,
           h('span', { class: 'spacer' }),
-          h('button', { onclick: () => update(() => (view.club = clubInput(club))) }, '고치기'),
+          h('button', { onclick: () => update(() => {
+            view.club = clubInput(club);
+            view.hole = null;
+          }) }, '고치기'),
+          h('button', { class: 'link danger-text', onclick: () => {
+            const msg = rounds > 0
+              ? `${club.name} 을(를) 지울까요? 이 골프장으로 친 라운드 ${rounds}개는 남고 골프장 연결만 끊겨요. 폰은 가져올 때 한 번 더 물어봐요.`
+              : `${club.name} 을(를) 지울까요? 폰은 가져올 때 한 번 더 물어봐요.`;
+            if (!confirm(msg)) return;
+            update(() => {
+              deleteItem(state, 'club', club.id);
+              view.message = { kind: 'ok', text: `${club.name} 을(를) 지웠어요. [저장] 탭에서 되돌릴 수 있어요.` };
+            });
+          } }, '지우기'),
         ),
-        h('div', { class: 'muted small' }, `9홀 코스 ${club.nines.length}개 · ${club.nines.map((n) => n.name).join('·')} · 이 골프장으로 친 라운드 ${rounds}개`),
+        h('div', { class: 'muted small' }, `9홀 코스 ${club.nines.length}개 · ${club.nines.map((n) => n.name).join('·')} · 이 골프장으로 친 라운드 ${rounds}개`,
+          club.tees?.length ? ` · 티 ${club.tees.join('·')}` : ''),
         club.nines.map((n) => h('div', { class: 'small' },
           `${n.name}  파 ${n.pars.join(' ')} (${n.pars.reduce((a, b) => a + b, 0)})`,
           n.strokeIndexes ? `  · HCDP ${n.strokeIndexes.join(' ')}` : '',
           n.courseRating != null || n.slopeRating != null ? `  · 레이팅 ${n.courseRating ?? '–'} / 슬로프 ${n.slopeRating ?? '–'}` : '',
+          m.nineHasYardage(n) ? `  · 📖 야디지북 ${n.holes.filter(m.holeHasContent).length}홀` : '',
         )),
       );
     }),
@@ -289,34 +319,69 @@ function clubList() {
 }
 
 /**
- * 골프장 편집 입력 상태. 9홀 코스마다 홀별 칸(파 9칸, HCDP 9칸)과 9홀 레이팅·슬로프 글자를 둔다.
- * 모르는 필드는 rest 에 그대로 둔다(저장할 때 다시 씀).
+ * 골프장 편집 입력 상태. 9홀 코스마다 홀별 칸(파 9칸, HCDP 9칸, 티마다 거리 9칸)과 9홀 레이팅·슬로프 글자,
+ * 홀마다 야디지북 글·그림(infos)을 둔다. 모르는 필드는 rest 에 그대로 둔다(저장할 때 다시 씀).
+ * 티는 행마다 key 를 붙여 이름을 바꿔도 거리 칸이 따라가게 한다. 거리 칸은 input.yards 면 야드로 보여 준다.
+ * 새로 넣은 그림은 골프장을 저장할 때까지 input.pendingImages 에 둔다.
  */
-function nineInputOf(n) {
+let teeSeq = 0;
+const newTeeKey = () => `t${++teeSeq}`;
+
+function holeInfoInput(hole, number) {
+  const x = hole ?? {};
+  return {
+    rest: hole ?? { number },
+    description: x.description ?? '',
+    hazardsText: (x.hazards ?? []).join(', '),
+    greenNote: x.greenNote ?? '',
+    myNote: x.myNote ?? '',
+    holeImage: x.holeImage ?? null,
+    greenImage: x.greenImage ?? null,
+  };
+}
+
+function nineInputOf(n, tees) {
+  const holeAt = (k) => (n.holes ?? []).find((x) => x.number === k + 1) ?? null;
+  const dists = {};
+  for (const tee of tees) dists[tee.key] = [...Array(9)].map((_, k) => String(holeAt(k)?.distances?.[tee.name] ?? ''));
   return {
     rest: n, id: n.id, isNew: false, name: n.name,
     pars: n.pars.map(String),
     sis: n.strokeIndexes ? n.strokeIndexes.map(String) : Array(9).fill(''),
     ratingText: n.courseRating != null ? String(n.courseRating) : '',
     slopeText: n.slopeRating != null ? String(n.slopeRating) : '',
+    dists,
+    infos: [...Array(9)].map((_, k) => holeInfoInput(holeAt(k), k + 1)),
+    hadHoles: Array.isArray(n.holes),
   };
 }
 
-function freshNineInput(name, pars) {
-  return { rest: {}, id: m.newId(), isNew: true, name, pars: pars.map(String), sis: Array(9).fill(''), ratingText: '', slopeText: '' };
+function freshNineInput(name, pars, tees = []) {
+  const dists = {};
+  for (const tee of tees) dists[tee.key] = Array(9).fill('');
+  return {
+    rest: {}, id: m.newId(), isNew: true, name, pars: pars.map(String), sis: Array(9).fill(''), ratingText: '', slopeText: '',
+    dists, infos: [...Array(9)].map((_, k) => holeInfoInput(null, k + 1)), hadHoles: false,
+  };
 }
 
 function clubInput(club) {
   if (!club) {
     return {
-      rest: {}, id: m.newId(), isNew: true, name: '', updatedAt: 0,
+      rest: {}, id: m.newId(), isNew: true, name: '', updatedAt: 0, tees: [], hadTees: false, yards: false, pendingImages: new Map(),
       nines: [freshNineInput('OUT', m.DEFAULT_PARS_18.slice(0, 9)), freshNineInput('IN', m.DEFAULT_PARS_18.slice(9))],
     };
   }
-  return { rest: club, id: club.id, isNew: false, name: club.name, updatedAt: club.updatedAt, nines: club.nines.map(nineInputOf) };
+  const tees = (club.tees ?? []).map((name) => ({ key: newTeeKey(), name }));
+  return {
+    rest: club, id: club.id, isNew: false, name: club.name, updatedAt: club.updatedAt,
+    tees, hadTees: Array.isArray(club.tees), yards: false, pendingImages: new Map(),
+    nines: club.nines.map((n) => nineInputOf(n, tees)),
+  };
 }
 
 const parCellOk = (v) => /^\d+$/.test(v.trim()) && Number(v) >= 3 && Number(v) <= 6;
+const distCellBad = (v, yards) => Number.isNaN(m.parseDistance(v, yards));
 
 /** HCDP 칸 하나가 틀렸는지: 1~18 정수이고 같은 코스에서 겹치지 않아야 한다. 빈 칸은 여기서 보지 않는다. */
 function siCellBad(sis, i) {
@@ -327,7 +392,7 @@ function siCellBad(sis, i) {
 }
 
 /** 9홀 코스 입력의 문제(칸 단위 검사). 저장을 막는다. */
-function nineInputProblems(n) {
+function nineInputProblems(n, input) {
   const problems = [];
   const label = n.name.trim() || '코스';
   if (!n.name.trim()) problems.push('코스 이름이 비어 있어요');
@@ -337,17 +402,52 @@ function nineInputProblems(n) {
   if (n.sis.some((_, i) => siCellBad(n.sis, i))) problems.push(`${label}: HCDP 는 1~18, 서로 다른 숫자로 적어 주세요`);
   if (n.ratingText.trim() && m.parseNineRating(n.ratingText) == null) problems.push(`${label}: 코스 레이팅은 ${m.NINE_RATING[0]}~${m.NINE_RATING[1]} (9홀 값)`);
   if (n.slopeText.trim() && m.parseSlope(n.slopeText) == null) problems.push(`${label}: 슬로프는 55~155`);
+  if (input.tees.some((t) => (n.dists[t.key] ?? []).some((v) => distCellBad(v, input.yards)))) {
+    problems.push(`${label}: 거리는 ${m.DISTANCE_RANGE[0]}~${m.DISTANCE_RANGE[1]}m 정수로 적어 주세요`);
+  }
   return problems;
 }
 
+function clubInputProblems(input) {
+  const problems = [...(input.name.trim() ? [] : ['골프장 이름이 비어 있어요']), ...input.nines.flatMap((n) => nineInputProblems(n, input))];
+  const names = input.tees.map((t) => t.name.trim());
+  if (names.some((x) => !x)) problems.push('티 이름이 비어 있어요');
+  if (new Set(names).size !== names.length) problems.push('티 이름이 겹쳐요');
+  return problems;
+}
+
+function holesFromInput(n, input) {
+  const holes = n.infos.map((info, k) => {
+    const distances = {};
+    for (const tee of input.tees) {
+      const v = m.parseDistance(n.dists[tee.key]?.[k], input.yards);
+      if (Number.isFinite(v) && tee.name.trim()) distances[tee.name.trim()] = v;
+    }
+    const text = (s) => (s.trim() ? s.trim() : null);
+    return {
+      ...info.rest,
+      number: k + 1,
+      distances,
+      description: text(info.description),
+      hazards: m.parseHazards(info.hazardsText),
+      greenNote: text(info.greenNote),
+      myNote: text(info.myNote),
+      holeImage: info.holeImage,
+      greenImage: info.greenImage,
+    };
+  });
+  return holes;
+}
+
 function clubFromInput(input) {
-  return {
+  const tees = input.tees.map((t) => t.name.trim()).filter(Boolean);
+  const club = {
     ...input.rest,
     id: input.id,
     name: input.name.trim(),
     nines: input.nines.map((n) => {
       const allSi = n.sis.every((v) => v.trim() !== '');
-      return {
+      const nine = {
         ...n.rest,
         id: n.id,
         name: n.name.trim(),
@@ -356,82 +456,308 @@ function clubFromInput(input) {
         courseRating: m.parseNineRating(n.ratingText),
         slopeRating: m.parseSlope(n.slopeText),
       };
+      // 야디지북: 원래 있었거나 무언가 적었을 때만 holes 를 둔다(없던 코스에 빈 holes 를 만들면 고친 것으로 보이므로)
+      const holes = holesFromInput(n, input);
+      if (n.hadHoles || holes.some(m.holeHasContent)) nine.holes = holes;
+      else delete nine.holes;
+      return nine;
     }),
     updatedAt: input.updatedAt,
   };
+  if (input.hadTees || tees.length) club.tees = tees;
+  else delete club.tees;
+  return club;
 }
 
-/** 엔터를 누르면 갈 칸: 파 1→9 → HCDP 1→9 → 다음 코스 파 1(마지막 코스면 그 코스 레이팅). */
-function nextCellId(i, row, h, nineCount) {
-  if (h < 8) return `n${i}-${row}${h + 1}`;
-  if (row === 'p') return `n${i}-s0`;
-  return i + 1 < nineCount ? `n${i + 1}-p0` : `n${i}-cr`;
+/** 엔터를 누르면 갈 칸: 파 1→9 → HCDP 1→9 → 티 거리 행들 → 다음 코스 파 1(마지막 코스면 그 코스 레이팅). */
+function nextCellId(i, row, col, input) {
+  if (col < 8) return `n${i}-${row}-${col + 1}`;
+  const rows = ['p', 's', ...input.tees.map((t) => `d${t.key}`)];
+  const r = rows.indexOf(row);
+  if (r >= 0 && r + 1 < rows.length) return `n${i}-${rows[r + 1]}-0`;
+  return i + 1 < input.nines.length ? `n${i + 1}-p-0` : `n${i}-cr`;
 }
 
-/** 9홀 코스 하나의 가로 표(스코어카드 모양). */
+/** 9홀 코스 하나의 가로 표(스코어카드 모양): 파, HCDP, 티마다 거리. */
 function nineGrid(input, n, i) {
-  const cell = (row, col) => {
-    const values = row === 'p' ? n.pars : n.sis;
-    const bad = row === 'p' ? !parCellOk(values[col]) : siCellBad(values, col);
-    return h('td', {}, h('input', {
-      id: `n${i}-${row}${col}`, value: values[col], inputmode: 'numeric', maxlength: 2, autocomplete: 'off',
-      'aria-label': `${m.ordinalCourse(i)} ${col + 1}번 홀 ${row === 'p' ? '파' : 'HCDP'}`,
-      'aria-invalid': bad ? 'true' : null,
-      oninput: (e) => (values[col] = e.target.value),
-      onchange: () => render(),
-      onfocus: (e) => e.target.select(),
-      onkeydown: (e) => {
-        if (e.key !== 'Enter') return;
-        e.preventDefault();
-        values[col] = e.target.value;
-        render();
-        const next = document.getElementById(nextCellId(i, row, col, input.nines.length));
-        next?.focus();
-        next?.select?.();
-      },
-      // "4,4,3,5…" 처럼 여러 숫자를 붙여 넣으면 이 칸부터 오른쪽으로 나눠 채운다
-      onpaste: (e) => {
-        const nums = m.splitNumbers(e.clipboardData.getData('text'));
-        if (nums.length < 2) return;
-        e.preventDefault();
-        nums.slice(0, 9 - col).forEach((v, k) => (values[col + k] = v));
-        render();
-      },
-    }));
-  };
+  const unit = input.yards ? 'yd' : 'm';
+  const cell = (row, col, values, bad, label) => h('td', {}, h('input', {
+    id: `n${i}-${row}-${col}`, value: values[col], inputmode: 'numeric', maxlength: row.startsWith('d') ? 3 : 2, autocomplete: 'off',
+    class: row.startsWith('d') ? 'dist' : null,
+    'aria-label': `${m.ordinalCourse(i)} ${col + 1}번 홀 ${label}`,
+    'aria-invalid': bad ? 'true' : null,
+    oninput: (e) => (values[col] = e.target.value),
+    onchange: () => render(),
+    onfocus: (e) => e.target.select(),
+    onkeydown: (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      values[col] = e.target.value;
+      render();
+      const next = document.getElementById(nextCellId(i, row, col, input));
+      next?.focus();
+      next?.select?.();
+    },
+    // "4,4,3,5…" 처럼 여러 숫자를 붙여 넣으면 이 칸부터 오른쪽으로 나눠 채운다
+    onpaste: (e) => {
+      const nums = m.splitNumbers(e.clipboardData.getData('text'));
+      if (nums.length < 2) return;
+      e.preventDefault();
+      nums.slice(0, 9 - col).forEach((v, k) => (values[col + k] = v));
+      render();
+    },
+  }));
   const total = n.pars.reduce((s, v) => s + (parCellOk(v) ? Number(v) : 0), 0);
+  const distRows = input.tees.map((tee) => {
+    const values = n.dists[tee.key] ?? (n.dists[tee.key] = Array(9).fill(''));
+    const sum = values.reduce((s, v) => s + (/^\d+$/.test(v.trim()) ? Number(v) : 0), 0);
+    return h('tr', {}, h('th', {}, `${tee.name || '티'} (${unit})`),
+      [...Array(9)].map((_, k) => cell(`d${tee.key}`, k, values, distCellBad(values[k], input.yards), `${tee.name} 거리`)),
+      h('td', { class: 'num muted' }, sum || ''));
+  });
   return h('div', { class: 'table-wrap' },
     h('table', { class: 'nine-grid' },
       h('thead', {}, h('tr', {}, h('th', {}, '홀'), [...Array(9)].map((_, k) => h('th', { class: 'num' }, k + 1)), h('th', { class: 'num' }, '합계'))),
       h('tbody', {},
-        h('tr', {}, h('th', {}, '파'), [...Array(9)].map((_, k) => cell('p', k)), h('td', { class: 'num' }, h('strong', {}, total))),
-        h('tr', {}, h('th', {}, 'HCDP'), [...Array(9)].map((_, k) => cell('s', k)), h('td', {})),
+        h('tr', {}, h('th', {}, '파'), [...Array(9)].map((_, k) => cell('p', k, n.pars, !parCellOk(n.pars[k]), '파')), h('td', { class: 'num' }, h('strong', {}, total))),
+        h('tr', {}, h('th', {}, 'HCDP'), [...Array(9)].map((_, k) => cell('s', k, n.sis, siCellBad(n.sis, k), 'HCDP')), h('td', {})),
+        distRows,
       ),
     ),
   );
 }
 
+/** 티 목록 편집: 이름 칸, 순서 바꾸기, 지우기, 추가. 거리 칸은 key 로 따라간다. */
+function teesEditor(input) {
+  const move = (k, d) => {
+    const t = input.tees.splice(k, 1)[0];
+    input.tees.splice(k + d, 0, t);
+    render();
+  };
+  return h('div', { class: 'tees' },
+    h('div', { class: 'row' },
+      h('strong', {}, '티 (야디지북 거리)'),
+      h('label', { class: 'row small' },
+        h('input', { type: 'checkbox', checked: input.yards, onchange: (e) => toggleYards(input, e.target.checked) }),
+        '거리를 야드로 적기 (저장할 때 미터로 바꿈)'),
+    ),
+    input.tees.length === 0 ? h('div', { class: 'row' },
+      h('span', { class: 'muted small' }, '티를 넣으면 9홀 코스 표에 티별 거리 줄이 생겨요.'),
+      h('button', { onclick: () => {
+        input.tees = m.DEFAULT_TEES.map((name) => ({ key: newTeeKey(), name }));
+        render();
+      } }, `기본 티 넣기 (${m.DEFAULT_TEES.join('·')})`),
+    ) : null,
+    h('div', { class: 'chips' }, input.tees.map((tee, k) => h('span', { class: 'tee' },
+      h('input', { id: `tee-${tee.key}`, value: tee.name, size: 6, 'aria-label': `${k + 1}번째 티 이름`,
+        'aria-invalid': !tee.name.trim() ? 'true' : null,
+        onchange: (e) => {
+          tee.name = e.target.value;
+          render();
+        } }),
+      k > 0 ? h('button', { class: 'link', title: '앞으로', onclick: () => move(k, -1) }, '◀') : null,
+      k < input.tees.length - 1 ? h('button', { class: 'link', title: '뒤로', onclick: () => move(k, 1) }, '▶') : null,
+      h('button', { class: 'link', title: '지우기', onclick: () => {
+        const filled = input.nines.some((n) => (n.dists[tee.key] ?? []).some((v) => v.trim()));
+        if (filled && !confirm(`${tee.name} 티의 거리를 모두 지울까요?`)) return;
+        input.tees.splice(k, 1);
+        render();
+      } }, '✕'),
+    ))),
+    h('button', { class: 'link', onclick: () => {
+      const tee = { key: newTeeKey(), name: '' };
+      input.tees.push(tee);
+      render();
+      document.getElementById(`tee-${tee.key}`)?.focus();
+    } }, '+ 티 추가'),
+  );
+}
+
+/** 야드로 적기를 켜고 끌 때 칸의 숫자를 바꿔 보여 준다(미터 ↔ 야드는 정수로 오가도 같은 값으로 돌아온다). */
+function toggleYards(input, yards) {
+  if (input.yards === yards) return;
+  const convert = yards ? m.mToYd : m.ydToM;
+  for (const n of input.nines) {
+    for (const key of Object.keys(n.dists)) {
+      n.dists[key] = n.dists[key].map((v) => (/^\d+$/.test(v.trim()) ? String(convert(Number(v))) : v));
+    }
+  }
+  input.yards = yards;
+  render();
+}
+
+/** 그림 바이트: 이번 편집에서 넣은 것 → 파일에 있던 것. 없으면 null(폰에만 있음). */
+const imageBytes = (input, name) => (name ? input.pendingImages.get(name) ?? state.images.get(name) ?? null : null);
+
+/** 그림 한 장 넣기: 줄여서(1600px 보다 클 때만) 이 홀의 이름으로 둔다. */
+async function putImage(input, n, k, kind, file) {
+  try {
+    const bytes = await prepareImage(file);
+    const name = m.imageName(n.id, k + 1, kind);
+    input.pendingImages.set(name, bytes);
+    n.infos[k][kind === 'hole' ? 'holeImage' : 'greenImage'] = name;
+    return true;
+  } catch (e) {
+    showError(`그림을 넣지 못했어요(${file.name ?? '붙여 넣은 그림'}): ${e.message}`);
+    return false;
+  }
+}
+
+/** 그림 칸: 그림 보기, 끌어다 놓기, 붙여넣기(칸을 누르고 Ctrl+V), 파일 고르기, 지우기. */
+function imageSlot(input, n, k, kind) {
+  const key = kind === 'hole' ? 'holeImage' : 'greenImage';
+  const name = n.infos[k][key];
+  const bytes = imageBytes(input, name);
+  const label = kind === 'hole' ? '홀 지도' : '그린 지도';
+  const pick = () => {
+    const fileInput = h('input', { type: 'file', accept: 'image/*' });
+    fileInput.addEventListener('change', async () => {
+      if (fileInput.files[0] && (await putImage(input, n, k, kind, fileInput.files[0]))) render();
+    });
+    fileInput.click();
+  };
+  const slot = h('div', { class: 'image-slot', tabindex: '0', 'aria-label': `${label}: 끌어다 놓기, 붙여넣기, 눌러서 파일 고르기` },
+    h('div', { class: 'small' }, h('strong', {}, label)),
+    bytes ? h('img', { src: imageUrl(bytes), alt: label })
+      : name ? h('p', { class: 'muted small' }, '그림이 폰에 있어요(이 파일에는 없음). 그림 포함 zip 으로 열면 보여요.')
+        : h('p', { class: 'muted small' }, '끌어다 놓기 · 이 칸을 누르고 Ctrl+V · ', h('button', { class: 'link', onclick: pick }, '파일 고르기')),
+    name ? h('div', { class: 'row' },
+      h('button', { class: 'link', onclick: pick }, '바꾸기'),
+      h('button', { class: 'link', onclick: () => {
+        n.infos[k][key] = null;
+        render();
+      } }, '지우기'),
+    ) : null,
+  );
+  slot.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    slot.classList.add('over');
+  });
+  slot.addEventListener('dragleave', () => slot.classList.remove('over'));
+  slot.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    slot.classList.remove('over');
+    const file = [...e.dataTransfer.files].find((f) => f.type.startsWith('image/'));
+    if (file && (await putImage(input, n, k, kind, file))) render();
+  });
+  slot.addEventListener('paste', async (e) => {
+    const item = [...e.clipboardData.items].find((x) => x.type.startsWith('image/'));
+    if (!item) return;
+    e.preventDefault();
+    if (await putImage(input, n, k, kind, item.getAsFile())) render();
+  });
+  return slot;
+}
+
+/** 홀 상세(야디지북): 그림 두 칸과 글. */
+function holePanel(input, n, i, k) {
+  const info = n.infos[k];
+  const field = (label, prop, multiline, placeholder) => h('label', { class: 'field' }, label,
+    h(multiline ? 'textarea' : 'input', {
+      id: `n${i}-h${k}-${prop}`, value: info[prop], placeholder,
+      onchange: (e) => {
+        info[prop] = e.target.value;
+        render();
+      },
+    }, multiline ? info[prop] : null));
+  const go = (d) => update(() => {
+    let { nine, k: hole } = view.hole;
+    hole += d;
+    if (hole > 8 && nine + 1 < input.nines.length) [nine, hole] = [nine + 1, 0];
+    if (hole < 0 && nine > 0) [nine, hole] = [nine - 1, 8];
+    if (hole >= 0 && hole <= 8) view.hole = { nine, k: hole };
+  });
+  return h('div', { class: 'hole-panel' },
+    h('div', { class: 'row' },
+      h('strong', {}, `${n.name || m.ordinalCourse(i)} ${k + 1}번 홀 · 파 ${n.pars[k]}${n.sis[k].trim() ? ` · HCDP ${n.sis[k]}` : ''}`),
+      h('span', { class: 'spacer' }),
+      h('button', { onclick: () => go(-1) }, '◀ 이전 홀'),
+      h('button', { onclick: () => go(1) }, '다음 홀 ▶'),
+      h('button', { class: 'link', onclick: () => update(() => (view.hole = null)) }, '닫기'),
+    ),
+    h('div', { class: 'grid2' }, imageSlot(input, n, k, 'hole'), imageSlot(input, n, k, 'green')),
+    field('공식 공략 (홈페이지 요약)', 'description', true, '티샷은 페어웨이 오른쪽을 겨냥…'),
+    h('div', { class: 'grid2' },
+      field('위험 요소 (쉼표로 구분)', 'hazardsText', false, '왼쪽 OB, 그린 앞 벙커'),
+      field('그린 메모', 'greenNote', false, '투그린, 앞뒤로 긴 그린'),
+    ),
+    field('내 공략 메모', 'myNote', true, '드라이버 대신 3W'),
+  );
+}
+
+/** 9홀 코스 아래 홀 버튼(야디지북이 있는 홀은 ●). 누르면 그 홀 상세를 연다. */
+function holeButtons(input, n, i) {
+  const club = clubFromInput(input);
+  const nine = club.nines[i];
+  return h('div', { class: 'row small' },
+    h('span', { class: 'muted' }, '야디지북 홀:'),
+    [...Array(9)].map((_, k) => {
+      const open = view.hole?.nine === i && view.hole?.k === k;
+      const filled = m.holeHasContent(nine.holes?.[k]);
+      return h('button', { class: 'chip', 'aria-pressed': String(open), onclick: () => update(() => (view.hole = open ? null : { nine: i, k })) },
+        `${k + 1}${filled ? '●' : ''}`);
+    }),
+  );
+}
+
+/** 여러 그림을 파일 이름 규칙(코스이름_홀번호_hole.jpg)으로 한꺼번에 넣는다. */
+async function dropManyImages(input, files) {
+  const unmatched = [];
+  let added = 0;
+  for (const file of files) {
+    const parsed = m.parseImageFileName(file.name);
+    const index = parsed ? input.nines.findIndex((n) => n.name.trim().toLowerCase() === parsed.course.toLowerCase()) : -1;
+    if (index < 0) {
+      unmatched.push(file.name);
+      continue;
+    }
+    if (await putImage(input, input.nines[index], parsed.number - 1, parsed.kind, file)) added++;
+  }
+  view.message = unmatched.length
+    ? { kind: 'warn', text: `그림 ${added}장을 넣었어요. 이름 규칙(코스이름_홀번호_hole.jpg / _green.jpg)에 맞지 않거나 코스 이름이 없는 파일: ${unmatched.join(', ')}` }
+    : { kind: 'ok', text: `그림 ${added}장을 넣었어요. 골프장을 저장하세요.` };
+  render();
+}
+
 function clubEditor() {
   const input = view.club;
   const club = clubFromInput(input);
-  const problems = [...(input.name.trim() ? [] : ['골프장 이름이 비어 있어요']), ...input.nines.flatMap(nineInputProblems)];
+  const problems = clubInputProblems(input);
   const changeAndRender = (fn) => (e) => {
     fn(e.target);
     render();
   };
+  const bulkDrop = h('div', { class: 'drop small' },
+    h('strong', {}, '그림 여러 장 한꺼번에: '),
+    `파일 이름을 "코스이름_홀번호_hole.jpg" / "코스이름_홀번호_green.jpg" 로 저장해 두고 여기에 끌어다 놓으세요. 1600px 보다 크면 줄여요.`);
+  bulkDrop.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    bulkDrop.classList.add('over');
+  });
+  bulkDrop.addEventListener('dragleave', () => bulkDrop.classList.remove('over'));
+  bulkDrop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    bulkDrop.classList.remove('over');
+    dropManyImages(input, [...e.dataTransfer.files].filter((f) => f.type.startsWith('image/')));
+  });
 
   return h('div', {},
     h('div', { class: 'row' },
-      h('button', { onclick: () => update(() => (view.club = null)) }, '← 목록'),
+      h('button', { onclick: () => update(() => {
+        view.club = null;
+        view.hole = null;
+      }) }, '← 목록'),
       h('h2', {}, input.isNew ? '골프장 추가' : '골프장 고치기'),
     ),
     h('div', { class: 'card' },
       h('label', { class: 'field' }, '골프장 이름',
         h('input', { id: 'club-name', value: input.name, onchange: changeAndRender((t) => (input.name = t.value)) })),
+      teesEditor(input),
       h('p', { class: 'muted small' },
-        '9홀 코스마다 홀별 파·HCDP 를 칸에 적어요. 엔터를 누르면 다음 홀로 넘어가요. ',
+        '9홀 코스마다 홀별 파·HCDP·티별 거리를 칸에 적어요. 엔터를 누르면 다음 홀로 넘어가요. ',
         '"4,4,3,5…" 를 한 칸에 붙여 넣으면 오른쪽 칸으로 나눠 채워요. HCDP 는 9칸 모두 적거나 모두 비워 두세요. ',
-        '27·36홀 골프장은 [9홀 코스 추가] 로 더해요. 골프장 삭제는 폰 코스 탭에서 해요.'),
+        '홀 번호 버튼을 누르면 그 홀의 그림·공략을 넣어요. 27·36홀 골프장은 [9홀 코스 추가] 로 더해요.'),
       input.nines.map((n, i) => h('div', { class: 'nine' },
         h('div', { class: 'nine-head' },
           h('strong', {}, m.ordinalCourse(i)),
@@ -450,12 +776,15 @@ function clubEditor() {
               'aria-invalid': n.slopeText.trim() && m.parseSlope(n.slopeText) == null ? 'true' : null,
               onchange: changeAndRender((t) => (n.slopeText = t.value)) })),
         ),
+        holeButtons(input, n, i),
+        view.hole?.nine === i ? holePanel(input, n, i, view.hole.k) : null,
       )),
       h('button', { onclick: () => {
-        input.nines.push(freshNineInput('', Array(9).fill(4)));
+        input.nines.push(freshNineInput('', Array(9).fill(4), input.tees));
         render();
         document.getElementById(`n${input.nines.length - 1}-name`)?.focus();
       } }, '+ 9홀 코스 추가'),
+      bulkDrop,
       problems.length ? h('ul', { class: 'problems' }, problems.map((p) => h('li', {}, p))) : null,
       club.nines.length >= 2 && club.nines.every((x) => x.courseRating != null && x.slopeRating != null)
         ? h('p', { class: 'muted small' }, `18홀 예: ${club.nines[0].name}+${club.nines[1].name} = 레이팅 ${m.comboRatings({ front: club.nines[0], back: club.nines[1] }).courseRating} / 슬로프 ${m.comboRatings({ front: club.nines[0], back: club.nines[1] }).slopeRating} (합·평균)`)
@@ -463,7 +792,13 @@ function clubEditor() {
     ),
     h('div', { class: 'sticky-actions' },
       h('button', { class: 'primary', disabled: problems.length > 0, onclick: () => saveClub(input) }, '골프장 저장'),
-      h('button', { onclick: () => update(() => (view.club = null)) }, '취소'),
+      h('button', { onclick: () => {
+        if (input.pendingImages.size && !confirm('넣은 그림을 저장하지 않고 닫을까요?')) return;
+        update(() => {
+          view.club = null;
+          view.hole = null;
+        });
+      } }, '취소'),
     ),
   );
 }
@@ -475,15 +810,24 @@ function removeNine(input, index) {
     if (n > 0 && !confirm(`${nine.name} 코스로 친 라운드 ${n}개의 코스 연결이 끊깁니다(라운드 기록은 남아요). 삭제할까요?`)) return;
   }
   input.nines.splice(index, 1);
+  view.hole = null;
   render();
 }
 
 function saveClub(input) {
   const club = clubFromInput(input);
   update(() => {
+    // 이 골프장이 실제로 쓰는 새 그림만 옮긴다(넣었다가 지운 그림은 버림).
+    const used = m.imageNamesOf([club]);
+    for (const [name, bytes] of input.pendingImages) {
+      if (!used.has(name)) continue;
+      state.images.set(name, bytes);
+      state.changedImages.add(name);
+    }
     const exists = state.backup.clubs.some((c) => c.id === club.id);
     state.backup.clubs = exists ? state.backup.clubs.map((c) => (c.id === club.id ? club : c)) : [...state.backup.clubs, club];
     view.club = null;
+    view.hole = null;
     view.message = { kind: 'ok', text: `${club.name} 을(를) 고쳤어요. [저장] 탭에서 백업 파일로 저장하세요.` };
   });
 }
@@ -712,6 +1056,17 @@ function roundEditor() {
     ),
     holesTable(r),
     h('p', { class: 'muted small' }, '타수를 고치면 샷이 있는 홀은 그 값으로 고정돼요(폰의 파·보기·더블과 같음). 샷 기록은 여기서 고치지 않아요.'),
+    h('div', { class: 'row' },
+      h('button', { class: 'danger', onclick: () => {
+        if (!confirm(`${fmtDate(r.date)} ${r.courseName} 라운드를 지울까요? 폰은 가져올 때 한 번 더 물어보고, 지우면 워치에서도 지워져요.`)) return;
+        update(() => {
+          deleteItem(state, 'round', r.id);
+          view.selected.delete(r.id);
+          view.roundId = null;
+          view.message = { kind: 'ok', text: '라운드를 지웠어요. [저장] 탭에서 되돌릴 수 있어요.' };
+        });
+      } }, '이 라운드 지우기'),
+    ),
   );
 }
 
@@ -758,45 +1113,71 @@ function holesTable(r) {
 function saveScreen() {
   const changes = changesOf(state);
   const problems = saveProblems(state);
-  const total = changes.newClubs.length + changes.changedClubs.length + changes.changedRounds.length;
-  const canOverwrite = !!fileHandle?.createWritable;
+  const total = changeCount(changes);
+  const imagesChanged = state.changedImages.size > 0;
+  // 그림을 넣거나 바꿨으면, 또는 zip 으로 열었으면 zip 이 기본
+  const zipFirst = imagesChanged || state.fromZip;
+  const canOverwrite = !!fileHandle?.createWritable && (state.fromZip || !imagesChanged);
+  const imageNames = m.imageNamesOf(state.backup.clubs);
+  const missing = [...imageNames].filter((n) => !state.images.has(n)).length;
+
+  const zipButton = h('button', { class: zipFirst ? 'primary' : null, disabled: problems.length > 0, onclick: () => save('download', 'zip') },
+    '백업 파일로 저장 (그림 포함 zip)');
+  const jsonButton = h('button', { class: zipFirst ? null : 'primary', disabled: problems.length > 0, onclick: () => save('download', 'json') },
+    '백업 파일로 저장 (JSON)');
 
   return h('div', {},
     h('h2', {}, '저장'),
     h('div', { class: 'card' },
       total === 0 ? h('p', { class: 'muted' }, '아직 고친 것이 없어요.') : h('div', {},
-        h('p', {}, `골프장 새로 ${changes.newClubs.length} · 고침 ${changes.changedClubs.length} / 라운드 고침 ${changes.changedRounds.length}`),
+        h('p', {}, `골프장 새로 ${changes.newClubs.length} · 고침 ${changes.changedClubs.length} / 라운드 고침 ${changes.changedRounds.length}` +
+          (changes.deletions.length ? ` / 지움 ${changes.deletions.length}` : '') + (imagesChanged ? ` / 그림 ${state.changedImages.size}장` : '')),
         h('ul', { class: 'small' },
           changes.newClubs.map((c) => h('li', {}, `새 골프장: ${c.name}`)),
           changes.changedClubs.map((c) => h('li', {}, `골프장: ${c.name}`)),
           changes.changedRounds.map((r) => h('li', {}, `라운드: ${fmtDate(r.date)} ${r.courseName}`)),
+          changes.deletions.map((t) => h('li', {},
+            `지움 · ${t.kind === 'club' ? '골프장' : '라운드'}: ${t.date ? `${fmtDate(t.date)} ` : ''}${t.name} `,
+            h('button', { class: 'link', onclick: () => update(() => undoDelete(state, t.kind, t.id)) }, '되돌리기'))),
         ),
       ),
       problems.length ? h('div', { class: 'notice error' }, '고쳐야 저장할 수 있어요:',
         h('ul', {}, problems.map((p) => h('li', {}, `${p.name}: ${p.problems.join(', ')}`)))) : null,
-      h('p', { class: 'notice' }, '이 파일을 만든 뒤 폰에서 같은 라운드를 또 고쳤다면, 가져올 때 이 파일의 내용이 이겨요(라운드 통째로). 한쪽에서만 고쳐 주세요.'),
+      imagesChanged ? h('p', { class: 'notice warn' }, '그림을 넣거나 바꿨어요. 폰에 그림이 들어가려면 그림 포함 zip 으로 저장하세요(JSON 에는 그림이 없어요).') : null,
+      missing > 0 ? h('p', { class: 'muted small' }, `야디지북 그림 ${missing}장은 이 파일에 없어요(폰에만 있음). JSON·zip 어느 쪽으로 저장해도 폰의 그 그림은 그대로 남아요.`) : null,
+      h('p', { class: 'notice' }, '이 파일을 만든 뒤 폰에서 같은 라운드·골프장을 또 고쳤다면, 가져올 때 이 파일의 내용이 이겨요(통째로). 한쪽에서만 고쳐 주세요.'),
       h('div', { class: 'row' },
-        h('button', { class: 'primary', disabled: problems.length > 0, onclick: () => save('download') }, '백업 파일로 저장'),
-        canOverwrite ? h('button', { disabled: problems.length > 0, onclick: () => save('overwrite') }, `연 파일에 덮어쓰기 (${fileName})`) : null,
+        zipFirst ? [zipButton, jsonButton] : [jsonButton, zipButton],
+        canOverwrite ? h('button', { disabled: problems.length > 0, onclick: () => save('overwrite', state.fromZip ? 'zip' : 'json') }, `연 파일에 덮어쓰기 (${fileName})`) : null,
       ),
     ),
     h('div', { class: 'card' },
       h('h3', {}, '폰에 넣기'),
-      h('p', {}, '저장한 파일을 Google Drive 등에 두고, 폰 라운드 탭 ⋮ → 백업 파일 가져오기 로 고르세요. 수정 시각이 더 최신인 것만 들어가고, 폰의 기록은 지워지지 않아요.'),
+      h('p', {}, '저장한 파일을 Google Drive 등에 두고, 폰 라운드 탭 ⋮ → 백업 파일 가져오기 로 고르세요. 수정 시각이 더 최신인 것만 들어가고, 폰의 기록은 지워지지 않아요. ',
+        '웹에서 지운 라운드·골프장은 폰이 목록을 보여 주고 물어본 뒤에 지워요.'),
+      h('p', { class: 'muted small' }, '이 파일(백업 v3)은 폰 앱 1.9 이상에서 가져올 수 있어요.'),
     ),
   );
 }
 
-async function save(mode) {
-  const { text, state: next } = buildSave(state);
+async function save(mode, kind) {
+  const { text, backup, state: next } = buildSave(state);
+  let body = text;
+  let note = '';
+  if (kind === 'zip') {
+    const zip = buildZip(text, backup, state.images);
+    body = zip.bytes;
+    note = ` (그림 ${zip.images}장${zip.missing ? `, 폰에만 있는 그림 ${zip.missing}장 제외` : ''})`;
+  }
+  const name = mode === 'overwrite' ? fileName : saveFileName(Date.now(), kind);
   try {
     if (mode === 'overwrite') {
       const writable = await fileHandle.createWritable();
-      await writable.write(text);
+      await writable.write(body);
       await writable.close();
     } else {
-      const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-      const a = h('a', { href: url, download: saveFileName() });
+      const url = URL.createObjectURL(new Blob([body], { type: kind === 'zip' ? 'application/zip' : 'application/json' }));
+      const a = h('a', { href: url, download: name });
       document.body.append(a);
       a.click();
       a.remove();
@@ -808,7 +1189,7 @@ async function save(mode) {
   }
   state = next;
   scheduleDraft();
-  view.message = { kind: 'ok', text: mode === 'overwrite' ? `${fileName} 에 저장했어요. 폰에서 가져오세요.` : `${saveFileName()} 로 내려받았어요. 폰에서 가져오세요.` };
+  view.message = { kind: 'ok', text: mode === 'overwrite' ? `${name} 에 저장했어요${note}. 폰에서 가져오세요.` : `${name} 로 내려받았어요${note}. 폰에서 가져오세요.` };
   render();
 }
 

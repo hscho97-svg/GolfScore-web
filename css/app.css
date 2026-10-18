@@ -123,6 +123,24 @@ td input[type="checkbox"] { width: 20px; min-height: 20px; }
 .nine-grid th:first-child { text-align: left; }
 .nine-grid input { width: 44px; text-align: center; padding: 4px; }
 
+.nine-grid input.dist { width: 52px; }
+.nine-grid th { white-space: nowrap; }
+
+/* 야디지북 */
+.tees { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.tee { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 6px; }
+.tee input { min-height: 30px; padding: 2px 6px; border: none; width: 6em; }
+.hole-panel { border: 1px solid var(--accent); border-radius: 8px; padding: 12px; margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }
+.image-slot {
+  border: 2px dashed var(--line); border-radius: 8px; padding: 10px; min-height: 160px;
+  display: flex; flex-direction: column; gap: 6px; background: var(--surface);
+}
+.image-slot:focus { outline: 2px solid var(--accent); }
+.image-slot.over { border-color: var(--accent); background: var(--accent-soft); color: inherit; }
+.image-slot img { max-width: 100%; max-height: 360px; object-fit: contain; border-radius: 4px; align-self: center; }
+.drop.small { padding: 14px; text-align: left; margin: 8px 0; }
+button.link.danger-text { color: var(--error); }
+
 .sticky-actions {
   position: sticky; bottom: 0; background: var(--bg); padding: 10px 0;
   display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line);

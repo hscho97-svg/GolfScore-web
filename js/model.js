@@ -312,3 +312,75 @@ export function withComboRatingsIfEmpty(round, combo) {
     slopeRating: round.slopeRating ?? r.slopeRating,
   };
 }
+
+// ── 야디지북 (앱 Yardage.kt, 앱 저장소 docs/spec-yardage-book.md) ──
+
+export const YARD_M = 0.9144;
+export const DEFAULT_TEES = ['블랙', '블루', '화이트', '레드'];
+/** 티 거리 범위(미터). 야드로 적으면 미터로 바꾼 값으로 본다. */
+export const DISTANCE_RANGE = [1, 700];
+/** 넣는 그림의 긴 변 최대(px). 원본이 더 작으면 원본 크기 그대로(키우지 않음, 2026-10-18 결정). */
+export const IMAGE_MAX_SIDE = 1600;
+export const IMAGE_QUALITY = 0.8;
+
+export const ydToM = (yd) => Math.round(yd * YARD_M);
+export const mToYd = (m) => Math.round(m / YARD_M);
+
+/** 그림 파일 이름: <9홀 코스 id>_<홀>_hole.jpg / …_green.jpg (YardageImages.name) */
+export const imageName = (nineId, number, kind) => `${nineId}_${number}_${kind}.jpg`;
+
+/** 파일 이름으로 써도 안전한지(YardageImages.isSafe 와 같음). */
+export const isSafeImageName = (name) => /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,150}\.jpg$/.test(name) && !name.includes('..');
+
+/** 골프장들이 쓰는 그림 이름 전부. */
+export function imageNamesOf(clubs) {
+  const names = new Set();
+  for (const club of clubs) {
+    for (const nine of club.nines ?? []) {
+      for (const hole of nine.holes ?? []) {
+        if (hole.holeImage) names.add(hole.holeImage);
+        if (hole.greenImage) names.add(hole.greenImage);
+      }
+    }
+  }
+  return names;
+}
+
+/** 거리·글·그림 중 하나라도 있으면 true (HoleInfo.hasContent). */
+export function holeHasContent(hole) {
+  if (!hole) return false;
+  return Object.keys(hole.distances ?? {}).length > 0 || !!hole.description?.trim() || (hole.hazards ?? []).length > 0 ||
+    !!hole.greenNote?.trim() || !!hole.myNote?.trim() || !!hole.holeImage || !!hole.greenImage;
+}
+
+export const nineHasYardage = (nine) => (nine.holes ?? []).some(holeHasContent);
+
+/** 거리 칸: 비면 null, 정수가 아니거나 범위 밖이면 NaN, 아니면 미터. yards 면 야드로 적은 것으로 보고 미터로 바꾼다. */
+export function parseDistance(text, yards = false) {
+  const s = String(text ?? '').trim();
+  if (s === '') return null;
+  if (!/^\d+$/.test(s)) return NaN;
+  const m = yards ? ydToM(Number(s)) : Number(s);
+  return m >= DISTANCE_RANGE[0] && m <= DISTANCE_RANGE[1] ? m : NaN;
+}
+
+/** 위험 요소 글: 쉼표·줄바꿈으로 나눈 목록. */
+export const parseHazards = (text) => String(text ?? '').split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
+
+/**
+ * 수집 가이드의 그림 파일 이름 규칙 `코스이름_홀번호_hole.jpg` / `코스이름_홀번호_green.jpg` 를 읽는다.
+ * jpg·jpeg·png·webp 를 받는다. 맞지 않으면 null. 결과: { course, number, kind }
+ */
+export function parseImageFileName(fileName) {
+  const match = /^(.+)_([1-9])_(hole|green)\.(jpe?g|png|webp)$/i.exec(String(fileName ?? '').trim());
+  if (!match) return null;
+  return { course: match[1].trim(), number: Number(match[2]), kind: match[3].toLowerCase() };
+}
+
+/** 그림 크기 정하기: 긴 변이 max 보다 크면 max 로 줄이고, 작으면 그대로. 결과: { width, height, resized } */
+export function fitImageSize(width, height, max = IMAGE_MAX_SIDE) {
+  const side = Math.max(width, height);
+  if (side <= max) return { width, height, resized: false };
+  const scale = max / side;
+  return { width: Math.round(width * scale), height: Math.round(height * scale), resized: true };
+}

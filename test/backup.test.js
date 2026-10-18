@@ -18,12 +18,12 @@ test('이 앱의 백업이 아니거나 버전이 다르면 연다고 하지 않
   assert.throws(() => openBackup('hello'), BackupError);
   assert.throws(() => openBackup('{"foo":1}'), BackupError);
   assert.throws(() => openBackup('{"version":1,"exportedAt":0,"rounds":[],"courses":[]}'), /옛 형식/);
-  assert.throws(() => openBackup('{"version":3,"exportedAt":0,"rounds":[]}'), /더 새 버전/);
+  assert.throws(() => openBackup('{"version":4,"exportedAt":0,"rounds":[]}'), /더 새 버전/);
 });
 
 test('아무것도 안 고치면 바뀐 것이 없고, 저장해도 수정 시각이 그대로', () => {
   const state = openBackup(sampleText);
-  assert.deepEqual(changesOf(state), { newClubs: [], changedClubs: [], changedRounds: [] });
+  assert.deepEqual(changesOf(state), { newClubs: [], changedClubs: [], changedRounds: [], deletions: [] });
   const saved = JSON.parse(buildSave(state, 999).text);
   const original = JSON.parse(sampleText);
   assert.deepEqual(saved.rounds, original.rounds);
@@ -49,7 +49,7 @@ test('고친 라운드·골프장과 새 골프장만 수정 시각이 오른다
   assert.equal(saved.clubs.find((c) => c.id === 'new-club').updatedAt, now);
   assert.notEqual(saved.clubs.find((c) => c.id === 'club-sample').updatedAt, now);
   // 저장한 내용이 새 기준이 되어, 바로 다시 보면 바뀐 것이 없다
-  assert.deepEqual(changesOf(after), { newClubs: [], changedClubs: [], changedRounds: [] });
+  assert.deepEqual(changesOf(after), { newClubs: [], changedClubs: [], changedRounds: [], deletions: [] });
 });
 
 test('모르는 필드(앞으로 생길 값)는 읽은 그대로 다시 쓴다', () => {
