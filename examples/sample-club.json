@@ -1,0 +1,49 @@
+{
+  "format": "golfscore-club/1",
+  "club": {
+    "name": "가상밸리CC",
+    "region": "가상도 가상시",
+    "website": "https://example.com/virtual-valley",
+    "tees": ["블루", "화이트", "레드"],
+    "distanceUnit": "yd",
+    "nines": [
+      {
+        "name": "힐",
+        "courseRating": 35.4,
+        "slopeRating": 126,
+        "holes": [
+          { "number": 1, "cardNumber": 1, "par": 4, "hcdp": 7, "distances": { "블루": 400, "화이트": 380, "레드": 320 }, "description": "티샷은 페어웨이 왼쪽. 그린 앞 벙커를 피해 한 클럽 길게", "hazards": ["오른쪽 OB", "그린 앞 벙커"], "greenNote": "뒤에서 앞으로 내리막", "holeImageUrl": "https://example.com/img/hill-01.png", "greenImageUrl": "https://example.com/img/hill-01-green.jpg" },
+          { "number": 2, "cardNumber": 2, "par": 5, "hcdp": 3, "distances": { "블루": 540, "화이트": 520, "레드": 450 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 3, "cardNumber": 3, "par": 3, "hcdp": 15, "distances": { "블루": 180, "화이트": 160, "레드": 120 }, "description": "코스 업데이트 예정", "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 4, "cardNumber": 4, "par": 4, "hcdp": 1, "distances": { "블루": 420, "화이트": 400, "레드": 340 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 5, "cardNumber": 5, "par": 4, "hcdp": 11, "distances": { "블루": 370, "화이트": 350, "레드": 300 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 6, "cardNumber": 6, "par": 3, "hcdp": 17, "distances": { "블루": 150, "화이트": 140, "레드": 110 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 7, "cardNumber": 7, "par": 4, "hcdp": 5, "distances": { "블루": 390, "화이트": 370, "레드": 310 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 8, "cardNumber": 8, "par": 5, "hcdp": 9, "distances": { "블루": 510, "화이트": 490, "레드": 420 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 9, "cardNumber": 9, "par": 4, "hcdp": 13, "distances": { "블루": 360, "화이트": 340, "레드": 290 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null }
+        ]
+      },
+      {
+        "name": "레이크",
+        "courseRating": null,
+        "slopeRating": null,
+        "holes": [
+          { "number": 1, "cardNumber": 10, "par": 4, "hcdp": 8, "distances": { "화이트": 360 }, "description": "왼쪽 연못을 넘기는 티샷", "hazards": ["왼쪽 연못"], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 2, "cardNumber": 11, "par": 4, "hcdp": 2, "distances": { "화이트": 390 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 3, "cardNumber": 12, "par": 3, "hcdp": 16, "distances": { "화이트": 150 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 4, "cardNumber": 13, "par": 5, "hcdp": 6, "distances": { "화이트": 510 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 5, "cardNumber": 14, "par": 4, "hcdp": 12, "distances": { "화이트": 340 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 6, "cardNumber": 15, "par": 4, "hcdp": 4, "distances": { "화이트": 380 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 7, "cardNumber": 16, "par": 3, "hcdp": 18, "distances": { "화이트": 130 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 8, "cardNumber": 17, "par": 4, "hcdp": 10, "distances": { "화이트": 350 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null },
+          { "number": 9, "cardNumber": 18, "par": 5, "hcdp": 14, "distances": { "화이트": 500 }, "description": null, "hazards": [], "greenNote": null, "holeImageUrl": null, "greenImageUrl": null }
+        ]
+      }
+    ],
+    "ratings": [
+      { "front": "힐", "back": "레이크", "tee": "화이트", "courseRating": 70.8, "slope": 127 }
+    ]
+  },
+  "source": { "urls": ["https://example.com/virtual-valley/course"], "checkedAt": "2026-10-30" },
+  "notes": ["가짜 골프장(시험용). 레이크 코스는 화이트 거리만 있음"]
+}

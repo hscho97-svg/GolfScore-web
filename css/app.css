@@ -150,3 +150,10 @@ button.link.danger-text { color: var(--error); }
   main { padding: 12px; }
   td input, td select { width: 52px; }
 }
+
+/* AI 결과 붙여넣기 */
+.import-text { width: 100%; min-height: 220px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.import-box { border: 1px solid var(--accent); display: flex; flex-direction: column; gap: 6px; }
+.import-box ul { margin: 4px 0 4px 18px; padding: 0; }
+.warn-text { color: var(--warn); }
+.error-text { color: var(--error); }

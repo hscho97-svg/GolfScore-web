@@ -7,6 +7,8 @@ import {
 } from './backup.js';
 import { clearDraft, loadDraft, saveDraft } from './draft.js';
 import { prepareImage, imageUrl } from './images.js';
+import { ImportError, buildClub, checkFormat, extractJson, findClub, imageListText } from './clubimport.js';
+import { PROMPT } from './prompt.js';
 
 const appEl = document.getElementById('app');
 const tabsEl = document.getElementById('tabs');
@@ -30,6 +32,7 @@ const view = {
   message: null, // { kind: 'ok'|'error'|'warn', text }
   fieldErrors: {},
   hole: null, // 골프장 편집에서 연 홀 상세 { nine: 코스 순서, k: 0~8 }
+  importing: null, // AI 결과 붙여넣기 창 { text, error, json, targetId }
 };
 
 // ── 작은 도우미 ──
@@ -112,6 +115,7 @@ function renderTabs() {
         view.tab = id;
         view.club = null;
         view.roundId = null;
+        view.importing = null;
         view.message = null;
       }),
     }, label);
@@ -129,7 +133,7 @@ function messageBox() {
 }
 
 function screen() {
-  if (view.tab === 'clubs') return view.club ? clubEditor() : clubList();
+  if (view.tab === 'clubs') return view.club ? clubEditor() : view.importing ? importScreen() : clubList();
   if (view.tab === 'rounds') return view.roundId ? roundEditor() : roundList();
   return saveScreen();
 }
@@ -214,7 +218,7 @@ async function loadFile(file, handle) {
   state = next;
   fileName = file.name;
   fileHandle = handle;
-  Object.assign(view, { tab: 'clubs', club: null, roundId: null, selected: new Set(), bulk: null, assign: null, fieldErrors: {}, hole: null });
+  Object.assign(view, { tab: 'clubs', club: null, roundId: null, selected: new Set(), bulk: null, assign: null, fieldErrors: {}, hole: null, importing: null });
   const b = state.backup;
   view.message = {
     kind: 'ok',
@@ -279,6 +283,8 @@ function clubList() {
     h('div', { class: 'row' },
       h('h2', {}, `골프장 ${clubs.length}개`),
       h('span', { class: 'spacer' }),
+      h('button', { onclick: () => copyText(PROMPT, 'AI 프롬프트를 복사했어요. {골프장 이름} 과 자료를 채워 ChatGPT·Claude 에 붙여 넣으세요.') }, '프롬프트 복사'),
+      h('button', { onclick: () => update(() => (view.importing = { text: '', error: null, json: null, targetId: '' })) }, 'AI 결과 붙여넣기'),
       h('button', { class: 'primary', onclick: () => update(() => (view.club = clubInput(null))) }, '+ 골프장 추가'),
     ),
     clubs.length === 0 ? h('p', { class: 'muted' }, '저장한 골프장이 없어요.') : null,
@@ -346,7 +352,7 @@ function nineInputOf(n, tees) {
   for (const tee of tees) dists[tee.key] = [...Array(9)].map((_, k) => String(holeAt(k)?.distances?.[tee.name] ?? ''));
   return {
     rest: n, id: n.id, isNew: false, name: n.name,
-    pars: n.pars.map(String),
+    pars: n.pars.map((v) => (v == null ? '' : String(v))),
     sis: n.strokeIndexes ? n.strokeIndexes.map(String) : Array(9).fill(''),
     ratingText: n.courseRating != null ? String(n.courseRating) : '',
     slopeText: n.slopeRating != null ? String(n.slopeRating) : '',
@@ -750,6 +756,7 @@ function clubEditor() {
       }) }, '← 목록'),
       h('h2', {}, input.isNew ? '골프장 추가' : '골프장 고치기'),
     ),
+    input.imported ? importBox(input.imported) : null,
     h('div', { class: 'card' },
       h('label', { class: 'field' }, '골프장 이름',
         h('input', { id: 'club-name', value: input.name, onchange: changeAndRender((t) => (input.name = t.value)) })),
@@ -800,6 +807,133 @@ function clubEditor() {
         });
       } }, '취소'),
     ),
+  );
+}
+
+// ── AI 결과 붙여넣기 (앱 저장소 docs/spec-club-import.md) ──
+
+async function copyText(text, okText) {
+  try {
+    await navigator.clipboard.writeText(text);
+    view.message = { kind: 'ok', text: okText };
+  } catch (e) {
+    view.message = { kind: 'error', text: `복사하지 못했어요: ${e.message}` };
+  }
+  render();
+}
+
+/** 붙여 넣은 글을 읽어 형식을 검사하고, 같은 이름의 골프장을 고른다. */
+function readImport(imp) {
+  try {
+    imp.json = checkFormat(extractJson(imp.text));
+    imp.error = null;
+    imp.targetId = findClub(state.backup.clubs, imp.json.club.name)?.id ?? '';
+  } catch (e) {
+    imp.json = null;
+    imp.error = e instanceof ImportError ? e.message : `읽지 못했어요: ${e.message}`;
+  }
+}
+
+function importScreen() {
+  const imp = view.importing;
+  const loadJsonFile = async (file) => {
+    imp.text = await file.text();
+    readImport(imp);
+    render();
+  };
+  const drop = h('div', { class: 'drop small' }, 'club.json 파일을 여기에 끌어다 놓아도 돼요.');
+  drop.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    drop.classList.add('over');
+  });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    drop.classList.remove('over');
+    const file = e.dataTransfer.files[0];
+    if (file) loadJsonFile(file);
+  });
+  const json = imp.json;
+  return h('div', {},
+    h('div', { class: 'row' },
+      h('button', { onclick: () => update(() => (view.importing = null)) }, '← 목록'),
+      h('h2', {}, 'AI 결과 붙여넣기'),
+    ),
+    h('div', { class: 'card' },
+      h('p', { class: 'muted small' },
+        '[프롬프트 복사] 로 받은 프롬프트에 골프장 자료를 붙여 AI(ChatGPT·Claude)에 물어본 뒤, AI 답을 그대로 붙여 넣으세요. ',
+        '앞뒤 설명 문장이 있어도 JSON 부분만 읽어요.'),
+      h('textarea', { id: 'import-text', class: 'import-text', value: imp.text, placeholder: '{ "format": "golfscore-club/1", … }',
+        'aria-label': 'AI 결과', oninput: (e) => (imp.text = e.target.value) }, imp.text),
+      drop,
+      h('div', { class: 'row' },
+        h('button', { class: 'primary', onclick: () => update(() => readImport(imp)) }, '읽기'),
+      ),
+      imp.error ? h('p', { class: 'notice error' }, imp.error) : null,
+    ),
+    json ? h('div', { class: 'card' },
+      h('strong', {}, json.club.name || '(이름 없음)'),
+      h('div', { class: 'muted small' },
+        `9홀 코스 ${json.club.nines.length}개 · ${json.club.nines.map((n) => n.name).join('·')}`,
+        json.club.tees?.length ? ` · 티 ${json.club.tees.join('·')}` : '',
+        json.club.distanceUnit ? ` · 거리 ${json.club.distanceUnit}` : ''),
+      h('label', { class: 'field' }, '넣을 곳',
+        h('select', { id: 'import-target', onchange: (e) => update(() => (imp.targetId = e.target.value)) },
+          h('option', { value: '' }, '새 골프장으로 추가'),
+          state.backup.clubs.map((c) => h('option', { value: c.id, selected: imp.targetId === c.id }, `${c.name} 에 넣기`)),
+        )),
+      imp.targetId ? h('p', { class: 'notice' },
+        'AI 결과에 있는 9홀 코스(이름이 같은 코스)는 AI 결과로 통째로 바뀌어요. AI 가 못 찾은 칸은 비워져요. ',
+        '골프장 이름·내 공략 메모·그림·AI 결과에 없는 9홀 코스는 그대로예요. 저장 전에 편집 화면에서 확인해요.') : null,
+      h('div', { class: 'row' }, h('button', { class: 'primary', onclick: () => openImport(imp) }, '편집 화면 열기')),
+    ) : null,
+  );
+}
+
+function openImport(imp) {
+  const existing = imp.targetId ? clubById(imp.targetId) : null;
+  const result = buildClub(imp.json, existing);
+  const input = clubInput(result.club);
+  input.isNew = !existing;
+  input.imported = result;
+  update(() => {
+    view.club = input;
+    view.importing = null;
+    view.hole = null;
+    view.message = null;
+  });
+}
+
+/** 편집 화면 맨 위: AI 메모, 경고, 지워지는 값, 바뀐 것, 참고 정보, 그림 주소 목록. 저장하면 사라진다. */
+function importBox(info) {
+  const section = (title, items, cls) => (items.length
+    ? h('div', { class: cls ?? null }, h('strong', { class: 'small' }, title), h('ul', { class: 'small' }, items.map((x) => h('li', {}, x))))
+    : null);
+  const { removed, changed } = info.changes;
+  return h('div', { class: 'card import-box' },
+    h('div', { class: 'row' },
+      h('strong', {}, 'AI 결과를 채웠어요 — 아직 저장 안 됨'),
+      h('span', { class: 'spacer' }),
+      h('button', { class: 'link', onclick: () => {
+        view.club.imported = null;
+        render();
+      } }, '이 상자 닫기'),
+    ),
+    h('p', { class: 'muted small' }, '칸을 확인하고 고친 뒤 맨 아래 [골프장 저장] 을 누르세요. [취소] 하면 아무것도 바뀌지 않아요.'),
+    section('AI 메모', info.notes),
+    section('확인할 것', info.warnings, 'warn-text'),
+    removed.length ? h('div', { class: 'error-text' },
+      h('strong', { class: 'small' }, `지워지는 값 ${removed.length}개`),
+      h('span', { class: 'small' }, ' — 남기려면 저장 전에 아래 칸에 다시 적으세요'),
+      h('ul', { class: 'small' }, removed.map((x) => h('li', {}, x)))) : null,
+    changed.length ? h('details', {}, h('summary', { class: 'small' }, `바뀐 것 ${changed.length}개`),
+      h('ul', { class: 'small' }, changed.map((x) => h('li', {}, x)))) : null,
+    section('참고 (저장하지 않음)', info.reference, 'muted'),
+    info.images.length ? h('details', {},
+      h('summary', { class: 'small' }, `그림 주소 ${info.images.length}개 — 이 이름으로 저장해 아래 [그림 여러 장 한꺼번에] 칸에 끌어다 놓으세요`),
+      h('button', { onclick: () => copyText(imageListText(info.images), `그림 주소 ${info.images.length}개를 복사했어요.`) }, '목록 복사'),
+      h('ul', { class: 'small' }, info.images.map((x) => h('li', {}, `${x.label} → `, h('code', {}, x.fileName), ' ',
+        h('a', { href: x.url, target: '_blank', rel: 'noopener noreferrer' }, '열기'))))) : null,
   );
 }
 
