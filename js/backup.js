@@ -45,6 +45,14 @@ export function openBackup(text) {
 }
 
 /**
+ * 폰 백업 없이 빈 상태로 시작한다([새로 시작]). 라운드·골프장이 없는 v3 백업을 연 것과 같다.
+ * 채 목록(bag)을 넣지 않으므로 폰이 가져와도 폰의 채 목록은 그대로다(앱 planImport 는 bag 이 없으면 건너뜀).
+ */
+export function newBackup(now = Date.now()) {
+  return { ...openBackup(JSON.stringify({ version: SUPPORTED_VERSION, exportedAt: now, rounds: [], clubs: [], deleted: [] })), fromZip: false };
+}
+
+/**
  * 파일 내용(바이트)을 연다. zip 이면 backup.json 과 images/ 의 그림을 읽는다. 결과: openBackup 과 같고 fromZip 이 붙는다.
  * 그림은 이름이 안전한 jpg 만 받는다.
  */

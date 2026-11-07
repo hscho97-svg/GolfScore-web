@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { BackupError, buildSave, changesOf, openBackup, saveFileName, saveProblems } from '../js/backup.js';
+import { BackupError, buildSave, changeCount, changesOf, newBackup, openBackup, saveFileName, saveProblems } from '../js/backup.js';
 import * as m from '../js/model.js';
 
 const sampleText = readFileSync(new URL('../examples/sample-backup.json', import.meta.url), 'utf8');
@@ -82,4 +82,21 @@ test('저장 전 검사: 잘못된 골프장을 알려 준다', () => {
 
 test('저장 파일 이름', () => {
   assert.equal(saveFileName(new Date(2026, 9, 17, 9).getTime()), 'golfscore-backup-20261017-web.json');
+});
+
+test('새로 시작: 빈 v3 백업이고, 만든 골프장만 저장되며 채 목록은 넣지 않는다', () => {
+  const state = newBackup(5);
+  assert.equal(state.backup.version, 3);
+  assert.deepEqual([state.backup.rounds, state.backup.clubs, state.backup.deleted], [[], [], []]);
+  assert.equal(changeCount(changesOf(state)), 0);
+
+  state.backup.clubs = [{ id: 'c1', name: '새 골프장', nines: [{ id: 'n', name: 'OUT', pars: m.defaultPars(9), strokeIndexes: null }], updatedAt: 0 }];
+  assert.equal(changesOf(state).newClubs.length, 1);
+  const saved = JSON.parse(buildSave(state, 999).text);
+  assert.equal(saved.clubs[0].updatedAt, 999);
+  assert.equal(saved.version, 3);
+  // bag 이 없어야 폰이 가져올 때 폰의 채 목록을 건드리지 않는다
+  assert.equal('bag' in saved, false);
+  // 저장한 파일을 다시 열 수 있다
+  assert.equal(openBackup(JSON.stringify(saved)).backup.clubs.length, 1);
 });

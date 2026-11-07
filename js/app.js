@@ -3,7 +3,7 @@
 
 import * as m from './model.js';
 import {
-  BackupError, buildSave, buildZip, changeCount, changesOf, deleteItem, openBackupBytes, saveFileName, saveProblems, undoDelete,
+  BackupError, buildSave, buildZip, changeCount, changesOf, deleteItem, newBackup, openBackupBytes, saveFileName, saveProblems, undoDelete,
 } from './backup.js';
 import { clearDraft, loadDraft, saveDraft } from './draft.js';
 import { prepareImage, imageUrl } from './images.js';
@@ -147,6 +147,14 @@ function startScreen() {
     h('button', { class: 'primary', onclick: () => pickFile() }, '백업 파일 열기'),
     h('p', { class: 'muted small' }, '또는 파일을 여기에 끌어다 놓기'),
   );
+  // 폰 백업 없이 골프장부터 만들 때. 폰에 이미 있는 골프장을 여기서 새로 만들면 폰에 같은 이름이 둘 생기므로 알린다.
+  const fresh = h('div', { class: 'card' },
+    h('strong', {}, '폰 백업 없이 새로 시작'),
+    h('p', { class: 'muted small' },
+      '빈 상태에서 골프장을 만들어 저장한 뒤 폰에서 가져오면 골프장이 더해져요(폰 라운드·골프장·내 채는 그대로). ',
+      h('strong', {}, '폰에 이미 있는 골프장'), '을 고치려면 폰 백업을 열어 주세요. 여기서 새로 만들면 폰에 같은 이름의 골프장이 하나 더 생겨요.'),
+    h('button', { onclick: () => startFresh() }, '새로 시작'),
+  );
   drop.addEventListener('dragover', (e) => {
     e.preventDefault();
     drop.classList.add('over');
@@ -174,6 +182,7 @@ function startScreen() {
       ),
     ) : null,
     drop,
+    fresh,
     h('div', { class: 'card' },
       h('h3', {}, '쓰는 순서'),
       h('ol', {},
@@ -225,6 +234,18 @@ async function loadFile(file, handle) {
     text: `${file.name} — 라운드 ${b.rounds.length}개 · 골프장 ${b.clubs.length}개 · 백업 ${fmtDate(b.exportedAt)}` +
       (state.fromZip ? ` · 야디지북 그림 ${state.images.size}개` : ''),
   };
+  scheduleDraft();
+  render();
+}
+
+/** [새로 시작]: 폰 백업 없이 빈 상태로 연다. 저장은 새 파일로만(덮어쓸 파일이 없음). */
+function startFresh() {
+  if (state && hasChanges() && !confirm('지금 고친 내용을 저장하지 않고 새로 시작할까요?')) return;
+  state = newBackup();
+  fileName = null;
+  fileHandle = null;
+  Object.assign(view, { tab: 'clubs', club: null, roundId: null, selected: new Set(), bulk: null, assign: null, fieldErrors: {}, hole: null, importing: null });
+  view.message = { kind: 'ok', text: '새로 시작 — 골프장을 추가하거나 [AI 결과 붙여넣기] 로 넣은 뒤 [저장] 탭에서 백업 파일로 저장하세요' };
   scheduleDraft();
   render();
 }
